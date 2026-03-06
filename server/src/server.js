@@ -2,11 +2,11 @@ require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
 const connectDB = require("./config/db");
+const authRoutes = require("./routes/authRoutes");
 
 const app = express();
 const PORT = process.env.PORT || 5000;
 
-// Middleware
 app.use(
   cors({
     origin: "http://localhost:5173",
@@ -15,20 +15,22 @@ app.use(
 );
 app.use(express.json());
 
-// Test route
+app.use("/api/auth", authRoutes);
+
 app.get("/", (req, res) => {
   res.json({ message: "API is running..." });
 });
 
-// Start server (after DB connection)
-connectDB()
-  .then(() => {
+const startServer = async () => {
+  try {
+    await connectDB();
     app.listen(PORT, () => {
-      console.log(`Server running on port ${PORT}`);
+      console.log(`Server running on http://localhost:${PORT}`);
     });
-  })
-  .catch((err) => {
-    console.error(err.message);
+  } catch (error) {
+    console.error("Failed to start server:", error.message);
     process.exit(1);
-  });
+  }
+};
 
+startServer();
