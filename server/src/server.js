@@ -3,7 +3,8 @@ const express = require("express");
 const cors = require("cors");
 const connectDB = require("./config/db");
 const authRoutes = require("./routes/authRoutes");
-const paymentRoutes = require("./routes/paymentRoutes")
+const paymentRoutes = require("./routes/paymentRoutes");
+const tripRoutes = require("./routes/tripRoutes");
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -18,6 +19,7 @@ app.use(express.json());
 
 app.use("/api/auth", authRoutes);
 app.use("/api/payments", paymentRoutes);
+app.use("/api/trips", tripRoutes);
 
 app.get("/", (req, res) => {
   res.json({ message: "API is running..." });
