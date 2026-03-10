@@ -1,3 +1,5 @@
+const { recordExpense } = require("../services/ledgerService");
+
 const recordUpiPayment = async (req, res) => {
   try {
     const {
@@ -23,14 +25,30 @@ const recordUpiPayment = async (req, res) => {
         .json({ message: "Missing required payment fields" });
     }
 
-    // TODO: Call Vikas's ledgerService here to hash and save this expense to the Immutable Ledger, passing the utrReference as proof of transaction.
+    const numericAmount = Number(amount);
+
+    if (!Number.isFinite(numericAmount) || numericAmount <= 0) {
+      return res
+        .status(400)
+        .json({ message: "Amount must be a positive number" });
+    }
+
+    const description = `UPI payment to ${merchantName} (${merchantUpiId}), UTR: ${utrReference}`;
+
+    const { expense, balances } = await recordExpense({
+      tripId,
+      paidBy: userId,
+      amount: numericAmount,
+      description,
+      category: "UPI_PAYMENT",
+    });
 
     return res.status(200).json({
       status: "success",
-      message: "UPI Payment recorded pending ledger hash",
+      message: "UPI payment recorded in immutable ledger",
       data: {
-        amount,
-        utrReference,
+        expense,
+        balances,
       },
     });
   } catch (error) {

@@ -1,5 +1,6 @@
 const crypto = require("crypto");
 const Expense = require("../models/Expense");
+const { calculateBalances } = require("./splitwiseService");
 
 const generateHash = (prevHash, amount, description, timestamp) => {
   const data = `${prevHash}|${amount}|${description}|${timestamp.toISOString()}`;
@@ -33,7 +34,8 @@ const recordExpense = async (expenseData) => {
     timestamp,
   });
 
-  return expense;
+  const balances = await calculateBalances(tripId, expense);
+  return { expense, balances };
 };
 
 module.exports = {
