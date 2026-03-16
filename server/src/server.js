@@ -6,6 +6,7 @@ const authRoutes = require("./routes/authRoutes");
 const paymentRoutes = require("./routes/paymentRoutes");
 const tripRoutes = require("./routes/tripRoutes");
 const userRoutes = require('./routes/userRoutes');
+const itineraryRoutes = require("./routes/itineraryRoutes");
 
 
 const app = express();
@@ -23,6 +24,7 @@ app.use("/api/auth", authRoutes);
 app.use("/api/payments", paymentRoutes);
 app.use("/api/trips", tripRoutes);
 app.use('/api/users', userRoutes);
+app.use("/api/itinerary", itineraryRoutes);
 
 app.get("/", (req, res) => {
   res.json({ message: "API is running..." });
