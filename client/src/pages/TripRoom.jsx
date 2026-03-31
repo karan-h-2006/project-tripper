@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { io } from 'socket.io-client';
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { ArrowLeft, IndianRupee, KeyRound, MapPinned, QrCode } from "lucide-react";
 import toast from "react-hot-toast";
@@ -40,6 +41,46 @@ const TripRoom = () => {
     // In future we can refetch balances or ledger here.
   };
 
+  useEffect(() => {
+    // Grab the token from localStorage (or your AuthContext)
+    const token = localStorage.getItem('tripper_token'); // Adjust this if you store it differently!
+
+    // Pass the token in the auth object
+    const socket = io('http://localhost:5000', {
+      auth: {
+        token: token
+      }
+    });
+
+    if (id) {
+      socket.emit('join_trip_room', id);
+    }
+
+    socket.on('budget_updated', (data) => {
+        toast.success(data.message);
+        // fetchTripData(); 
+    });
+
+     // Listen for AI changes
+     socket.on('itinerary_changed', (data) => {
+      toast.custom('🤖 ' + data.message);
+      // Trigger a re-fetch of the itinerary
+      fetchItineraryData();
+    });
+  
+
+    // Catch authentication errors sent by the backend
+    socket.on('connect_error', (err) => {
+      console.error('Socket connection failed:', err.message);
+      toast.error('Real-time connection failed. Please log in again.');
+    });
+
+    return () => {
+      socket.disconnect();
+    };
+  }, [id]);
+
+ 
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-50">
