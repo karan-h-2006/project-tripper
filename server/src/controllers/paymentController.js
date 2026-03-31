@@ -43,6 +43,16 @@ const recordUpiPayment = async (req, res) => {
       category: "UPI_PAYMENT",
     });
 
+  // ... existing validation and ledger TODO comment ...
+  // --- NEW SOCKET CODE ---
+  const io = req.app.get('io');
+  // Broadcast to everyone currently viewing this specific trip
+  io.to(tripId).emit('budget_updated', { 
+      message: `${req.user.username} just added an expense of ₹${amount}`,
+      amountAdded: amount 
+  });
+  // -----------------------
+
     return res.status(200).json({
       status: "success",
       message: "UPI payment recorded in immutable ledger",
