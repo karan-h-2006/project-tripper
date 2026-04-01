@@ -4,15 +4,19 @@ import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { ArrowLeft, IndianRupee, KeyRound, MapPinned, QrCode } from "lucide-react";
 import toast from "react-hot-toast";
 import api from "../api/axios";
+import { useAuth } from "../context/useAuth.js";
+import ActivityFeed from "../components/ActivityFeed.jsx";
 import UpiScannerModal from "../components/UpiScannerModal.jsx";
 
 const TripRoom = () => {
   const { id } = useParams();
   const navigate = useNavigate();
   const location = useLocation();
+  const { user } = useAuth();
   const [trip, setTrip] = useState(location.state?.trip || null);
   const [loading, setLoading] = useState(!location.state?.trip);
   const [upiModalOpen, setUpiModalOpen] = useState(false);
+  const [socket, setSocket] = useState(null);
 
   useEffect(() => {
     if (trip || !id) return;
@@ -41,6 +45,10 @@ const TripRoom = () => {
     // In future we can refetch balances or ledger here.
   };
 
+  // Placeholder: itinerary state/UI isn't implemented in this page yet.
+  // This prevents ESLint from failing on the socket listener below.
+  const fetchItineraryData = () => {};
+
   useEffect(() => {
     // Grab the token from localStorage (or your AuthContext)
     const token = localStorage.getItem('tripper_token'); // Adjust this if you store it differently!
@@ -51,6 +59,7 @@ const TripRoom = () => {
         token: token
       }
     });
+    setSocket(socket);
 
     if (id) {
       socket.emit('join_trip_room', id);
@@ -76,6 +85,7 @@ const TripRoom = () => {
     });
 
     return () => {
+      setSocket(null);
       socket.disconnect();
     };
   }, [id]);
@@ -123,7 +133,8 @@ const TripRoom = () => {
         </div>
       </header>
 
-      <main className="max-w-5xl mx-auto px-4 py-6 space-y-5">
+      <main className="max-w-6xl mx-auto px-4 py-6 grid grid-cols-1 lg:grid-cols-3 gap-5">
+        <div className="lg:col-span-2 space-y-5">
         <section className="bg-white rounded-2xl shadow-md border border-gray-100 p-4 sm:p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div className="flex items-start gap-3">
             <div className="inline-flex items-center justify-center w-10 h-10 rounded-2xl bg-indigo-600 text-white shadow-md">
@@ -174,6 +185,15 @@ const TripRoom = () => {
             UPI payments recorded here will flow into an immutable expense
             ledger and smart settle-up suggestions for your group.
           </p>
+        </section>
+        </div>
+
+        <section className="lg:col-span-1">
+          <ActivityFeed
+            tripId={id}
+            socket={socket}
+            currentUserId={user?._id || ""}
+          />
         </section>
       </main>
 
