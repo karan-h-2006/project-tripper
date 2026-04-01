@@ -1,5 +1,8 @@
 const crypto = require("crypto");
 const Expense = require("../models/Expense");
+const Trip = require("../models/Trip");
+const eventEmitter = require("../events/budgetEvents");
+const { calculateBalances } = require("./splitwiseService");
 
 const generateHash = (prevHash, amount, description, timestamp) => {
   const data = `${prevHash}|${amount}|${description}|${timestamp.toISOString()}`;
@@ -33,7 +36,37 @@ const recordExpense = async (expenseData) => {
     timestamp,
   });
 
-  return expense;
+  const trip = await Trip.findById(tripId).select("total_budget");
+
+  if (trip && Number(trip.total_budget) > 0) {
+    const [totals] = await Expense.aggregate([
+      { $match: { tripId: expense.tripId } },
+      { $group: { _id: "$tripId", totalSpent: { $sum: "$amount" } } },
+    ]);
+
+    const totalBudget = Number(trip.total_budget);
+    const totalSpent = Number(totals?.totalSpent || 0);
+    const remainingBudget = Number((totalBudget - totalSpent).toFixed(2));
+    const criticalThreshold = Number((totalBudget * 0.2).toFixed(2));
+
+    console.log(
+      `[LEDGER] Trip ${tripId}: total=${totalBudget.toFixed(
+        2
+      )}, spent=${totalSpent.toFixed(2)}, remaining=${remainingBudget.toFixed(2)}`
+    );
+
+    if (remainingBudget < criticalThreshold) {
+      console.log(
+        `[LEDGER] Emitting budget_critical for trip ${tripId} (threshold ${criticalThreshold.toFixed(
+          2
+        )})`
+      );
+      eventEmitter.emit("budget_critical", tripId.toString());
+    }
+  }
+
+  const balances = await calculateBalances(tripId, expense);
+  return { expense, balances };
 };
 
 module.exports = {

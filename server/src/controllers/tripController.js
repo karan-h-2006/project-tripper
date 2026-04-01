@@ -38,7 +38,61 @@ const createTrip = async (req, res) => {
   }
 };
 
+const getMyTrips = async (req, res) => {
+  try {
+    const userId = req.user && (req.user.id || req.user._id);
+
+    if (!userId) {
+      return res.status(401).json({ message: "Not authorized" });
+    }
+
+    const trips = await Trip.find({ members: userId })
+      .populate("admin", "-password")
+      .populate("members", "-password")
+      .sort({ updatedAt: -1, createdAt: -1 });
+
+    return res.status(200).json({ trips });
+  } catch (error) {
+    console.error("Get my trips error:", error);
+    return res.status(500).json({ message: "Server error" });
+  }
+};
+
+const getTripById = async (req, res) => {
+  try {
+    const userId = req.user && (req.user.id || req.user._id);
+    const { id } = req.params;
+
+    if (!userId) {
+      return res.status(401).json({ message: "Not authorized" });
+    }
+
+    const trip = await Trip.findById(id)
+      .populate("admin", "-password")
+      .populate("members", "-password");
+
+    if (!trip) {
+      return res.status(404).json({ message: "Trip not found" });
+    }
+
+    const isMember = trip.members.some(
+      (memberId) => memberId.toString() === userId.toString()
+    );
+
+    if (!isMember) {
+      return res.status(403).json({ message: "Forbidden" });
+    }
+
+    return res.status(200).json({ trip });
+  } catch (error) {
+    console.error("Get trip by id error:", error);
+    return res.status(500).json({ message: "Server error" });
+  }
+};
+
 module.exports = {
   createTrip,
+  getMyTrips,
+  getTripById,
 };
 
