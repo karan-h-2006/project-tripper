@@ -8,6 +8,7 @@ const connectDB = require("./config/db");
 const authRoutes = require("./routes/authRoutes");
 const paymentRoutes = require("./routes/paymentRoutes");
 const tripRoutes = require("./routes/tripRoutes");
+const expenseRoutes = require("./routes/expenseRoutes");
 const userRoutes = require('./routes/userRoutes');
 const itineraryRoutes = require("./routes/itineraryRoutes");
 
@@ -41,6 +42,7 @@ app.use(express.json());
 app.use("/api/auth", authRoutes);
 app.use("/api/payments", paymentRoutes);
 app.use("/api/trips", tripRoutes);
+app.use("/api/expenses", expenseRoutes);
 app.use('/api/users', userRoutes);
 app.use("/api/itinerary", itineraryRoutes);
 
