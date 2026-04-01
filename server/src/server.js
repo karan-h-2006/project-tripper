@@ -10,6 +10,7 @@ const paymentRoutes = require("./routes/paymentRoutes");
 const tripRoutes = require("./routes/tripRoutes");
 const userRoutes = require('./routes/userRoutes');
 const itineraryRoutes = require("./routes/itineraryRoutes");
+const Activity = require("./models/Activity");
 
 
 const app = express();
@@ -43,6 +44,7 @@ app.use("/api/payments", paymentRoutes);
 app.use("/api/trips", tripRoutes);
 app.use('/api/users', userRoutes);
 app.use("/api/itinerary", itineraryRoutes);
+app.use("/api/activities", require("./routes/activityRoutes"));
 
 app.get("/", (req, res) => {
   res.json({ message: "API is running..." });
@@ -73,6 +75,29 @@ io.on("connection", (socket) => {
       console.log(`User ${socket.id} joined trip room: ${tripId}`);
     } catch (error) {
       console.error("Error joining trip room:", error.message);
+    }
+  });
+
+  socket.on("send_message", async (data) => {
+    try {
+      const { tripId, userId, text, type } = data || {};
+
+      if (!tripId || !text) {
+        return;
+      }
+
+      const activity = await Activity.create({
+        tripId,
+        userId: userId || socket.userId || null,
+        text,
+        type,
+      });
+
+      await activity.populate("userId", "username profilePic");
+
+      io.to(tripId).emit("receive_message", activity);
+    } catch (error) {
+      console.error("send_message error:", error);
     }
   });
 
