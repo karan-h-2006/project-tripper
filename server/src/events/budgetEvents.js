@@ -1,5 +1,5 @@
 const EventEmitter = require("events");
-feature/join-trip-and-splitwise
+
 const { optimizeItinerary } = require("../services/aiService");
 
 const budgetEmitter = new EventEmitter();
@@ -30,5 +30,3 @@ eventEmitter.on("budget_critical", (tripId) => {
 });
 
 module.exports = eventEmitter;
-
-main
