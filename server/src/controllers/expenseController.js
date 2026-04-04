@@ -16,12 +16,15 @@ const createExpense = async (req, res) => {
       return res.status(401).json({ message: "Not authorized" });
     }
 
+    const io = req.app.get("io");
+
     const result = await recordExpense({
       tripId,
       paidBy: userId,
       amount,
       description,
       category,
+      io,
     });
 
     return res.status(201).json(result);

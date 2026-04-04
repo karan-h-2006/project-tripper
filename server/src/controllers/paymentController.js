@@ -35,17 +35,19 @@ const recordUpiPayment = async (req, res) => {
 
     const description = `UPI payment to ${merchantName} (${merchantUpiId}), UTR: ${utrReference}`;
 
+    const io = req.app.get("io");
+
     const { expense, balances } = await recordExpense({
       tripId,
       paidBy: userId,
       amount: numericAmount,
       description,
       category: "UPI_PAYMENT",
+      io,
     });
 
   // ... existing validation and ledger TODO comment ...
   // --- NEW SOCKET CODE ---
-  const io = req.app.get('io');
   // Broadcast to everyone currently viewing this specific trip
   io.to(tripId).emit('budget_updated', { 
       message: `${req.user.username} just added an expense of ₹${amount}`,
