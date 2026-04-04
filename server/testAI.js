@@ -4,7 +4,7 @@ require('dotenv').config(); // Loads your .env file
 
 const budgetEmitter = require('./src/events/budgetEvents');
 const Trip = require('./src/models/Trip');
-const Itinerary = require('./src/models/Itinerary');
+const ItineraryItem = require('./src/models/ItineraryItem');
 
 // 1. We mock Socket.io so we don't need a frontend or Karan's code to test
 const mockIO = {
@@ -32,10 +32,15 @@ async function runTest() {
         total_budget: 5000
     });
     
-    await Itinerary.create({
+    await ItineraryItem.create({
         tripId: dummyTrip._id,
-        title: "Super Expensive Luxury Resort",
-        estimated_cost: 2000
+        location_name: "Super Expensive Luxury Resort",
+        location: {
+          type: "Point",
+          coordinates: [77.209, 28.6139],
+        },
+        estimated_cost: 2000,
+        scheduled_time: new Date(),
     });
     console.log(`2. Created Dummy Trip (ID: ${dummyTrip._id})...`);
 

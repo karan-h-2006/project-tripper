@@ -37,6 +37,15 @@ const itineraryItemSchema = new mongoose.Schema(
       type: Date,
       required: true,
     },
+    // Optional: carried over from legacy embedded itinerary rows (day / activity labels)
+    day: {
+      type: Number,
+      min: 1,
+    },
+    activity: {
+      type: String,
+      trim: true,
+    },
   },
   { timestamps: true }
 );
