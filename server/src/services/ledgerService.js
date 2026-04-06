@@ -1,7 +1,7 @@
 const crypto = require("crypto");
 const Expense = require("../models/Expense");
 const Trip = require("../models/Trip");
-const eventEmitter = require("../events/budgetEvents");
+const budgetEmitter = require("../events/budgetEvents");
 const { calculateBalances } = require("./splitwiseService");
 
 const generateHash = (prevHash, amount, description, timestamp) => {
@@ -10,7 +10,7 @@ const generateHash = (prevHash, amount, description, timestamp) => {
 };
 
 const recordExpense = async (expenseData) => {
-  const { tripId, paidBy, amount, description, category } = expenseData;
+  const { tripId, paidBy, amount, description, category, io } = expenseData;
 
   if (!tripId || !paidBy || typeof amount !== "number" || !description) {
     throw new Error("Missing required expense fields");
@@ -61,7 +61,7 @@ const recordExpense = async (expenseData) => {
           2
         )})`
       );
-      eventEmitter.emit("budget_critical", tripId.toString());
+      budgetEmitter.emit("budget_critical", tripId.toString(), io);
     }
   }
 

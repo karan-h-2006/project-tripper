@@ -4,6 +4,8 @@ const ItineraryItem = require("../models/ItineraryItem");
 
 const getUserIdFromReq = (req) => (req.user && (req.user.id || req.user._id)) || null;
 
+//Note: The server expects a flat coordinates: [lng, lat] array directly in the request body rather than a nested location object — the controller wraps it into GeoJSON internally.
+
 const isValidCoordinates = (coordinates) => {
   if (!Array.isArray(coordinates) || coordinates.length !== 2) return false;
   const [lng, lat] = coordinates;

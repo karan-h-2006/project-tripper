@@ -146,3 +146,5 @@ vite.config.ts.timestamp-*
 # Postman collection and environment files
 postman
 .postman
+
+repomix-output.xml

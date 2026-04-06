@@ -1,4 +1,5 @@
 const { recordExpense } = require("../services/ledgerService");
+const Activity = require("../models/Activity");
 
 const recordUpiPayment = async (req, res) => {
   try {
@@ -35,23 +36,32 @@ const recordUpiPayment = async (req, res) => {
 
     const description = `UPI payment to ${merchantName} (${merchantUpiId}), UTR: ${utrReference}`;
 
+    const io = req.app.get("io");
+
     const { expense, balances } = await recordExpense({
       tripId,
       paidBy: userId,
       amount: numericAmount,
       description,
       category: "UPI_PAYMENT",
+      io,
     });
 
-  // ... existing validation and ledger TODO comment ...
-  // --- NEW SOCKET CODE ---
-  const io = req.app.get('io');
-  // Broadcast to everyone currently viewing this specific trip
-  io.to(tripId).emit('budget_updated', { 
+    const activity = await Activity.create({
+      tripId,
+      userId,
+      text: `${req.user.username} paid ₹${numericAmount}`,
+      type: "system",
+    });
+
+    await activity.populate("userId", "username profilePic");
+
+    const roomString = tripId.toString();
+    io.to(roomString).emit("receive_message", activity);
+    io.to(roomString).emit("budget_updated", {
       message: `${req.user.username} just added an expense of ₹${amount}`,
-      amountAdded: amount 
-  });
-  // -----------------------
+      amountAdded: amount,
+    });
 
     return res.status(200).json({
       status: "success",
