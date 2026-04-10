@@ -1,9 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import PropTypes from "prop-types";
-import axios from "axios";
+import api from "../api/axios";
 import { Send } from "lucide-react";
-
-const API_BASE_URL = "http://localhost:5000";
 
 const ActivityFeed = ({ tripId, socket, currentUserId }) => {
   const [activities, setActivities] = useState([]);
@@ -22,23 +20,13 @@ const ActivityFeed = ({ tripId, socket, currentUserId }) => {
     if (!tripId) return;
 
     const fetchHistory = async () => {
-      const token = localStorage.getItem("tripper_token");
-      if (!token) {
-        console.error("Failed to fetch history: missing auth token");
-        return;
+      try {
+        const res = await api.get(`/activities/${tripId}`);
+        // Backend returns the raw array directly: res.status(200).json(activities)
+        setActivities(res.data);
+      } catch (err) {
+        console.error("Failed to fetch history:", err);
       }
-
-      axios
-        .get(`${API_BASE_URL}/api/activities/${tripId}`, {
-          headers: { Authorization: `Bearer ${token}` },
-        })
-        .then((res) => {
-          // Backend returns the raw array directly: res.status(200).json(activities)
-          setActivities(res.data);
-        })
-        .catch((err) => {
-          console.error("Failed to fetch history:", err);
-        });
     };
 
     fetchHistory();
