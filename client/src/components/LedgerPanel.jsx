@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import PropTypes from "prop-types";
 import api from "../api/axios";
+import { useAuth } from "../context/useAuth.js";
 
 const formatCurrency = (value) =>
   new Intl.NumberFormat("en-IN", {
@@ -30,14 +31,17 @@ const formatDateTime = (value) => {
 };
 
 const LedgerPanel = ({ tripId, socket }) => {
+  const { user } = useAuth();
   const [ledgerData, setLedgerData] = useState({
     totalBudget: 0,
     totalSpent: 0,
     remainingBudget: 0,
     transactions: [],
     balances: [],
+    members: [],
   });
   const [expandedTxnId, setExpandedTxnId] = useState(null);
+  const currentUserId = String(user?._id || "");
 
   const fetchLedger = useCallback(async () => {
     if (!tripId) return;
@@ -75,6 +79,63 @@ const LedgerPanel = ({ tripId, socket }) => {
   const burnPercentRaw = budget > 0 ? (spent / budget) * 100 : 0;
   const burnPercent = Math.min(Math.max(burnPercentRaw, 0), 100);
   const overspent = spent > budget && budget > 0;
+  const personalizedBalances = useMemo(() => {
+    const rawBalances = Array.isArray(ledgerData.balances) ? ledgerData.balances : [];
+    const members = Array.isArray(ledgerData.members) ? ledgerData.members : [];
+
+    if (!currentUserId || rawBalances.length === 0) {
+      return { toPay: [], toReceive: [] };
+    }
+
+    const netBalances = {};
+
+    const getId = (value) => String(value?._id || value || "");
+
+    rawBalances.forEach((balance) => {
+      const fromId = getId(balance.from ?? balance.owes);
+      const toId = getId(balance.to);
+      const amount = Number(balance.amount || 0);
+
+      if (!fromId || !toId || amount <= 0) return;
+
+      if (fromId === currentUserId) {
+        netBalances[toId] = (netBalances[toId] || 0) - amount;
+      } else if (toId === currentUserId) {
+        netBalances[fromId] = (netBalances[fromId] || 0) + amount;
+      }
+    });
+
+    const toPay = [];
+    const toReceive = [];
+
+    Object.keys(netBalances).forEach((otherUserId) => {
+      const netAmount = Number((netBalances[otherUserId] || 0).toFixed(2));
+      if (Math.abs(netAmount) < 0.01) return;
+
+      const otherUser =
+        members.find((m) => String(m._id) === otherUserId) || {
+          _id: otherUserId,
+          username: "Unknown Member",
+        };
+
+      if (netAmount < 0) {
+        toPay.push({
+          user: otherUser,
+          amount: Number(Math.abs(netAmount).toFixed(2)),
+        });
+      } else {
+        toReceive.push({
+          user: otherUser,
+          amount: Number(netAmount.toFixed(2)),
+        });
+      }
+    });
+
+    toPay.sort((a, b) => b.amount - a.amount);
+    toReceive.sort((a, b) => b.amount - a.amount);
+
+    return { toPay, toReceive };
+  }, [ledgerData.balances, ledgerData.members, currentUserId]);
 
   return (
     <section className="bg-white rounded-2xl shadow-sm border border-gray-100 p-4 sm:p-5 space-y-5">
@@ -118,20 +179,50 @@ const LedgerPanel = ({ tripId, socket }) => {
         )}
       </div>
 
-      {Array.isArray(ledgerData.balances) && ledgerData.balances.length > 0 && (
-        <div className="rounded-xl border border-gray-100 p-3">
-          <h3 className="text-sm font-semibold text-gray-900 mb-2">Settlement Balances</h3>
-          <ul className="space-y-2">
-            {ledgerData.balances.map((balance, index) => (
-              <li key={`${balance.owes?._id || balance.owes}-${balance.to?._id || balance.to}-${index}`} className="text-sm text-gray-700">
-                <span className="font-medium">{balance.owes?.username || "Member"}</span> owes{" "}
-                <span className="font-medium">{balance.to?.username || "Member"}</span>{" "}
-                <span className="font-semibold text-indigo-700">{formatCurrency(balance.amount)}</span>
-              </li>
-            ))}
-          </ul>
+      <div className="rounded-xl border border-gray-100 p-3">
+        <h3 className="text-sm font-semibold text-gray-900 mb-3">Settlement Balances</h3>
+
+        {personalizedBalances.toPay.length === 0 && personalizedBalances.toReceive.length === 0 ? (
+          <div className="rounded-lg border border-emerald-100 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
+            You are all settled up! 🎉
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <div className="rounded-lg border border-red-100 bg-red-50 p-3">
+              <p className="text-xs font-semibold uppercase tracking-wide text-red-700">To Pay</p>
+              <ul className="mt-2 space-y-2">
+                {personalizedBalances.toPay.length === 0 ? (
+                  <li className="text-xs text-red-600">Nothing to pay.</li>
+                ) : (
+                  personalizedBalances.toPay.map((item) => (
+                    <li key={`pay-${item.user._id}`} className="rounded-md bg-white/80 px-2 py-1 text-sm text-gray-700">
+                      You owe <span className="font-medium">{item.user.username}</span>:{" "}
+                      <span className="font-semibold text-red-600">{formatCurrency(item.amount)}</span>
+                    </li>
+                  ))
+                )}
+              </ul>
+            </div>
+
+            <div className="rounded-lg border border-emerald-100 bg-emerald-50 p-3">
+              <p className="text-xs font-semibold uppercase tracking-wide text-emerald-700">To Receive</p>
+              <ul className="mt-2 space-y-2">
+                {personalizedBalances.toReceive.length === 0 ? (
+                  <li className="text-xs text-emerald-700">Nothing to receive.</li>
+                ) : (
+                  personalizedBalances.toReceive.map((item) => (
+                    <li key={`receive-${item.user._id}`} className="rounded-md bg-white/80 px-2 py-1 text-sm text-gray-700">
+                      <span className="font-medium">{item.user.username}</span> owes you:{" "}
+                      <span className="font-semibold text-green-600">{formatCurrency(item.amount)}</span>
+                    </li>
+                  ))
+                )}
+              </ul>
+            </div>
+          </div>
+        )}
         </div>
-      )}
+      
 
       <div>
         <h3 className="text-sm font-semibold text-gray-900 mb-2">Transaction History</h3>

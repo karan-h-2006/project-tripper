@@ -1,4 +1,5 @@
 const { getLedgerSummary } = require("../services/ledgerService");
+const Trip = require("../models/Trip");
 
 const getLedger = async (req, res) => {
   try {
@@ -9,7 +10,31 @@ const getLedger = async (req, res) => {
     }
 
     const ledger = await getLedgerSummary(tripId);
-    return res.status(200).json(ledger);
+    const trip = await Trip.findById(tripId).populate(
+      "members",
+      "username profilePic"
+    );
+
+    if (!trip) {
+      return res.status(404).json({ message: "Trip not found" });
+    }
+
+    const {
+      totalBudget,
+      totalSpent,
+      remainingBudget,
+      transactions,
+      balances,
+    } = ledger;
+
+    return res.status(200).json({
+      totalBudget,
+      totalSpent,
+      remainingBudget,
+      transactions,
+      balances,
+      members: trip.members || [],
+    });
   } catch (error) {
     if (error.message === "Trip not found") {
       return res.status(404).json({ message: "Trip not found" });
