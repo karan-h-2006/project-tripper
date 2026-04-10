@@ -1,6 +1,8 @@
 const mongoose = require("mongoose");
 const Trip = require("../models/Trip");
 const ItineraryItem = require("../models/ItineraryItem");
+const Expense = require("../models/Expense");
+const { optimizeItinerary } = require("../services/aiService");
 
 const getUserIdFromReq = (req) => (req.user && (req.user.id || req.user._id)) || null;
 
@@ -119,8 +121,24 @@ const getItinerary = async (req, res) => {
       return res.status(membership.status).json({ message: membership.message });
     }
 
-    const items = await ItineraryItem.find({ tripId }).sort({ scheduled_time: 1 });
-    return res.status(200).json({ items });
+    const [trip, items, expenseTotals] = await Promise.all([
+      Trip.findById(tripId).select("total_budget"),
+      ItineraryItem.find({ tripId }).sort({ scheduled_time: 1 }),
+      Expense.aggregate([
+        { $match: { tripId: membership.trip._id } },
+        { $group: { _id: "$tripId", totalSpent: { $sum: "$amount" } } },
+      ]),
+    ]);
+
+    const totalBudget = Number(trip?.total_budget || 0);
+    const totalSpent = Number(expenseTotals[0]?.totalSpent || 0);
+    const remainingBudget = totalBudget - totalSpent;
+    const unvisitedCost = items.reduce(
+      (sum, item) => (item.visited ? sum : sum + Number(item.estimated_cost || 0)),
+      0
+    );
+
+    return res.status(200).json({ itinerary: items, remainingBudget, unvisitedCost });
   } catch (error) {
     console.error("Get itinerary error:", error);
     return res.status(500).json({ message: "Server error" });
@@ -225,10 +243,76 @@ const deleteItineraryItem = async (req, res) => {
   }
 };
 
+const toggleVisitedStatus = async (req, res) => {
+  try {
+    const userId = getUserIdFromReq(req);
+    const { itemId } = req.params;
+
+    if (!userId) {
+      return res.status(401).json({ message: "Not authorized" });
+    }
+
+    if (!mongoose.Types.ObjectId.isValid(itemId)) {
+      return res.status(400).json({ message: "Invalid itemId" });
+    }
+
+    const item = await ItineraryItem.findById(itemId);
+    if (!item) {
+      return res.status(404).json({ message: "Itinerary item not found" });
+    }
+
+    const membership = await ensureTripExistsAndMember({
+      tripId: item.tripId,
+      userId,
+    });
+    if (!membership.ok) {
+      return res.status(membership.status).json({ message: membership.message });
+    }
+
+    item.visited = !item.visited;
+    await item.save();
+
+    const io = req.app.get("io");
+    const roomString = item.tripId.toString();
+
+    // Re-check budget only when item is unchecked (visited -> false).
+    if (item.visited === false) {
+      const [trip, expenseTotals, pendingItems] = await Promise.all([
+        Trip.findById(item.tripId).select("total_budget"),
+        Expense.aggregate([
+          { $match: { tripId: item.tripId } },
+          { $group: { _id: "$tripId", totalSpent: { $sum: "$amount" } } },
+        ]),
+        ItineraryItem.find({ tripId: item.tripId, visited: false }).select(
+          "estimated_cost"
+        ),
+      ]);
+
+      const totalSpent = expenseTotals[0]?.totalSpent || 0;
+      const remainingBudget = (trip?.total_budget || 0) - totalSpent;
+      const remainingItineraryCost = pendingItems.reduce(
+        (sum, itineraryItem) => sum + (itineraryItem.estimated_cost || 0),
+        0
+      );
+
+      if (remainingItineraryCost > remainingBudget) {
+        await optimizeItinerary(item.tripId, io);
+      }
+    }
+
+    io.to(roomString).emit("itinerary_updated");
+    return res.status(200).json(item);
+  } catch (error) {
+    console.error("Toggle visited status error:", error);
+    return res.status(500).json({ message: "Server error" });
+  }
+};
+
 module.exports = {
   addItineraryItem,
   getItinerary,
   updateItineraryItem,
   deleteItineraryItem,
+  toggleVisitedStatus,
 };
 

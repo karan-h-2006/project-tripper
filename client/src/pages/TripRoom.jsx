@@ -6,6 +6,7 @@ import toast from "react-hot-toast";
 import api from "../api/axios";
 import { useAuth } from "../context/useAuth.js";
 import ActivityFeed from "../components/ActivityFeed.jsx";
+import ItineraryPanel from "../components/ItineraryPanel.jsx";
 import UpiScannerModal from "../components/UpiScannerModal.jsx";
 
 const TripRoom = () => {
@@ -45,10 +46,6 @@ const TripRoom = () => {
     // In future we can refetch balances or ledger here.
   };
 
-  // Placeholder: itinerary state/UI isn't implemented in this page yet.
-  // This prevents ESLint from failing on the socket listener below.
-  const fetchItineraryData = () => {};
-
   useEffect(() => {
     // Grab the token from localStorage (or your AuthContext)
     const token = localStorage.getItem('tripper_token'); // Adjust this if you store it differently!
@@ -69,14 +66,6 @@ const TripRoom = () => {
         toast.success(data.message);
         // fetchTripData(); 
     });
-
-     // Listen for AI changes
-     socket.on('itinerary_changed', (data) => {
-      toast.custom('🤖 ' + data.message);
-      // Trigger a re-fetch of the itinerary
-      fetchItineraryData();
-    });
-  
 
     // Catch authentication errors sent by the backend
     socket.on('connect_error', (err) => {
@@ -133,8 +122,12 @@ const TripRoom = () => {
         </div>
       </header>
 
-      <main className="max-w-6xl mx-auto px-4 py-6 grid grid-cols-1 lg:grid-cols-3 gap-5">
-        <div className="lg:col-span-2 space-y-5">
+      <main className="max-w-7xl mx-auto px-4 py-6 grid grid-cols-1 lg:grid-cols-5 gap-5">
+        <section className="lg:col-span-2">
+          <ItineraryPanel tripId={id} socket={socket} />
+        </section>
+
+        <div className="lg:col-span-3 space-y-5">
         <section className="bg-white rounded-2xl shadow-md border border-gray-100 p-4 sm:p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div className="flex items-start gap-3">
             <div className="inline-flex items-center justify-center w-10 h-10 rounded-2xl bg-indigo-600 text-white shadow-md">
@@ -188,7 +181,7 @@ const TripRoom = () => {
         </section>
         </div>
 
-        <section className="lg:col-span-1">
+        <section className="lg:col-span-3">
           <ActivityFeed
             tripId={id}
             socket={socket}
