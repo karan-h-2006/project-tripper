@@ -11,6 +11,7 @@ const tripRoutes = require("./routes/tripRoutes");
 const expenseRoutes = require("./routes/expenseRoutes");
 const userRoutes = require('./routes/userRoutes');
 const itineraryRoutes = require("./routes/itineraryRoutes");
+const ledgerRoutes = require("./routes/ledgerRoutes");
 const Activity = require("./models/Activity");
 
 const ALLOWED_ORIGINS = [
@@ -49,6 +50,7 @@ app.use("/api/expenses", expenseRoutes);
 app.use('/api/users', userRoutes);
 app.use("/api/itinerary", itineraryRoutes);
 app.use("/api/activities", require("./routes/activityRoutes"));
+app.use("/api/ledger", ledgerRoutes);
 
 app.get("/", (req, res) => {
   res.json({ message: "API is running..." });

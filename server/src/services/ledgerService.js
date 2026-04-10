@@ -69,7 +69,70 @@ const recordExpense = async (expenseData) => {
   return { expense, balances };
 };
 
+const parseUpiMetadata = (description = "") => {
+  const merchantMatch = description.match(/UPI payment to (.+?) \(/i);
+  const utrMatch = description.match(/UTR:\s*([A-Za-z0-9-]+)/i);
+
+  return {
+    merchantName: merchantMatch ? merchantMatch[1] : null,
+    utrReference: utrMatch ? utrMatch[1] : null,
+  };
+};
+
+const getLedgerSummary = async (tripId) => {
+  const trip = await Trip.findById(tripId)
+    .select("total_budget balances")
+    .populate("balances.owes", "username")
+    .populate("balances.to", "username");
+
+  if (!trip) {
+    throw new Error("Trip not found");
+  }
+
+  const expenses = await Expense.find({ tripId })
+    .populate("paidBy", "username profilePic")
+    .sort({ timestamp: -1, _id: -1 });
+
+  const totalSpent = Number(
+    expenses.reduce((sum, expense) => sum + Number(expense.amount || 0), 0).toFixed(2)
+  );
+  const totalBudget = Number(trip.total_budget || 0);
+  const remainingBudget = Number((totalBudget - totalSpent).toFixed(2));
+
+  const transactions = expenses.map((expense) => {
+    const { merchantName, utrReference } = parseUpiMetadata(expense.description);
+    return {
+      _id: expense._id,
+      amount: Number(expense.amount || 0),
+      description: expense.description || "",
+      merchantName,
+      utrReference,
+      date: expense.timestamp,
+      timestamp: expense.timestamp,
+      userId: expense.paidBy,
+      paidBy: expense.paidBy,
+    };
+  });
+
+  const balances = Array.isArray(trip.balances)
+    ? trip.balances.map((entry) => ({
+        owes: entry.owes,
+        to: entry.to,
+        amount: Number(entry.amount || 0),
+      }))
+    : [];
+
+  return {
+    totalBudget,
+    totalSpent,
+    remainingBudget,
+    transactions,
+    balances,
+  };
+};
+
 module.exports = {
   recordExpense,
+  getLedgerSummary,
 };
 
