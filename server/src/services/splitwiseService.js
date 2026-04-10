@@ -4,11 +4,11 @@ const Expense = require("../models/Expense");
 
 /**
  * Calculate and persist simplified balances for a trip.
+ * Also computes exact person-to-person balances without greedy minimization.
  *
  * @param {string|mongoose.Types.ObjectId} tripId - The trip identifier.
  * @param {Object} [newExpense] - Optional newly created expense to include in the calculation.
- * @returns {Promise<Array>} An array of simplified balances of the form:
- *   [{ owes: ObjectId, to: ObjectId, amount: Number }]
+ * @returns {Promise<{ simplifiedBalances: Array, exactBalances: Array }>}
  */
 const calculateBalances = async (tripId, newExpense) => {
   // Normalize tripId to a Mongoose ObjectId
@@ -30,7 +30,7 @@ const calculateBalances = async (tripId, newExpense) => {
     expenses.push(newExpense);
   }
 
-  // 3. Build a net balance map for each member.
+  // 3. Build exact person-to-person debt matrix and net map.
   //    Convention:
   //      net[user] > 0  => user should receive money overall
   //      net[user] < 0  => user owes money overall
@@ -38,6 +38,10 @@ const calculateBalances = async (tripId, newExpense) => {
   const net = {};
   memberIds.forEach((id) => {
     net[id] = 0;
+  });
+  const debtMatrix = {};
+  memberIds.forEach((debtorId) => {
+    debtMatrix[debtorId] = {};
   });
 
   // We assume each expense is split equally among ALL trip members.
@@ -50,7 +54,7 @@ const calculateBalances = async (tripId, newExpense) => {
       continue;
     }
 
-    const share = expense.amount / memberIds.length;
+    const share = Number(expense.amount || 0) / memberIds.length;
 
     // For each member:
     //  - decrease their net by their fair share (they "consume" this amount)
@@ -58,10 +62,47 @@ const calculateBalances = async (tripId, newExpense) => {
     for (const memberId of memberIds) {
       net[memberId] -= share;
       net[payerId] += share;
+
+      if (memberId !== payerId) {
+        debtMatrix[memberId][payerId] =
+          (debtMatrix[memberId][payerId] || 0) + share;
+      }
     }
   }
 
-  // 4. Convert net balances into a simplified set of directed debts.
+  // 4. Net the exact matrix (A->B minus B->A), keep only non-zero edges.
+  const exactBalances = [];
+  const processedPairs = new Set();
+
+  for (const debtorId of memberIds) {
+    for (const creditorId of memberIds) {
+      if (debtorId === creditorId) continue;
+
+      const pairKey = [debtorId, creditorId].sort().join("|");
+      if (processedPairs.has(pairKey)) continue;
+      processedPairs.add(pairKey);
+
+      const forward = Number((debtMatrix[debtorId]?.[creditorId] || 0).toFixed(2));
+      const reverse = Number((debtMatrix[creditorId]?.[debtorId] || 0).toFixed(2));
+      const netAmount = Number((forward - reverse).toFixed(2));
+
+      if (netAmount > 0.01) {
+        exactBalances.push({
+          from: new mongoose.Types.ObjectId(debtorId),
+          to: new mongoose.Types.ObjectId(creditorId),
+          amount: Number(netAmount.toFixed(2)),
+        });
+      } else if (netAmount < -0.01) {
+        exactBalances.push({
+          from: new mongoose.Types.ObjectId(creditorId),
+          to: new mongoose.Types.ObjectId(debtorId),
+          amount: Number(Math.abs(netAmount).toFixed(2)),
+        });
+      }
+    }
+  }
+
+  // 5. Convert net balances into a simplified set of directed debts.
   //    - Collect creditors (net > 0) and debtors (net < 0).
   //    - Greedily match largest debtor with largest creditor, paying off
   //      as much as possible each step. This minimizes the number of edges
@@ -111,11 +152,11 @@ const calculateBalances = async (tripId, newExpense) => {
     }
   }
 
-  // 5. Persist the simplified balances on the Trip document
+  // 6. Persist the simplified balances on the Trip document
   trip.balances = simplifiedBalances;
   await trip.save();
 
-  return simplifiedBalances;
+  return { simplifiedBalances, exactBalances };
 };
 
 module.exports = {

@@ -8,6 +8,7 @@ import { useAuth } from "../context/useAuth.js";
 import ActivityFeed from "../components/ActivityFeed.jsx";
 import ItineraryPanel from "../components/ItineraryPanel.jsx";
 import UpiScannerModal from "../components/UpiScannerModal.jsx";
+import LedgerPanel from "../components/LedgerPanel.jsx";
 
 const TripRoom = () => {
   const { id } = useParams();
@@ -122,12 +123,12 @@ const TripRoom = () => {
         </div>
       </header>
 
-      <main className="max-w-7xl mx-auto px-4 py-6 grid grid-cols-1 lg:grid-cols-5 gap-5">
-        <section className="lg:col-span-2">
+      <main className="max-w-7xl mx-auto px-4 py-6 grid grid-cols-1 lg:grid-cols-12 gap-5">
+        <section className="lg:col-span-4">
           <ItineraryPanel tripId={id} socket={socket} />
         </section>
 
-        <div className="lg:col-span-3 space-y-5">
+        <div className="lg:col-span-5 space-y-5 min-h-0">
         <section className="bg-white rounded-2xl shadow-md border border-gray-100 p-4 sm:p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div className="flex items-start gap-3">
             <div className="inline-flex items-center justify-center w-10 h-10 rounded-2xl bg-indigo-600 text-white shadow-md">
@@ -169,19 +170,10 @@ const TripRoom = () => {
           </button>
         </section>
 
-        {/* Placeholder for future ledger / balances UI */}
-        <section className="bg-white rounded-2xl shadow-sm border border-dashed border-gray-200 p-4 sm:p-5 text-center">
-          <p className="text-sm font-medium text-gray-800 mb-1">
-            Ledger coming soon
-          </p>
-          <p className="text-xs text-gray-500 max-w-md mx-auto">
-            UPI payments recorded here will flow into an immutable expense
-            ledger and smart settle-up suggestions for your group.
-          </p>
-        </section>
+        <LedgerPanel tripId={id} socket={socket} />
         </div>
 
-        <section className="lg:col-span-3">
+        <section className="lg:col-span-3 min-h-0">
           <ActivityFeed
             tripId={id}
             socket={socket}
