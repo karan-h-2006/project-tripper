@@ -13,19 +13,21 @@ const userRoutes = require('./routes/userRoutes');
 const itineraryRoutes = require("./routes/itineraryRoutes");
 const Activity = require("./models/Activity");
 
+const ALLOWED_ORIGINS = [
+  "http://localhost:5173",
+  "http://localhost:5174",
+  "http://localhost:5175",
+  ...(process.env.CLIENT_URL ? [process.env.CLIENT_URL] : []),
+];
 
 const app = express();
 const server = http.createServer(app);
 const io = new Server(server, {
   cors: {
-    origin: [
-      'http://localhost:5173', 
-      'http://localhost:5174', 
-      'http://localhost:5175',
-      process.env.CLIENT_URL // For when you eventually deploy
-    ],
-    credentials: true
-  }
+    origin: ALLOWED_ORIGINS,
+    credentials: true,
+    methods: ["GET", "POST", "PUT", "PATCH", "DELETE"],
+  },
 });
 
 // Make the socket.io instance available to controllers via req.app.get("io")
@@ -34,7 +36,7 @@ const PORT = process.env.PORT || 5000;
 
 app.use(
   cors({
-    origin: "http://localhost:5173",
+    origin: ALLOWED_ORIGINS,
     credentials: true,
   })
 );
