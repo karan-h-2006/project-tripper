@@ -1,4 +1,5 @@
 const { recordExpense } = require("../services/ledgerService");
+const Activity = require("../models/Activity");
 
 const createExpense = async (req, res) => {
   try {
@@ -26,6 +27,24 @@ const createExpense = async (req, res) => {
       category,
       io,
     });
+
+    const activity = await Activity.create({
+      tripId,
+      userId: req.user.id,
+      text: `${req.user.username} added an expense of ₹${amount} for ${description || "the trip"}`,
+      type: "system",
+    });
+
+    await activity.populate("userId", "username profilePic");
+
+    if (io) {
+      const roomString = tripId.toString();
+      io.to(roomString).emit("receive_message", activity);
+      io.to(roomString).emit("budget_updated", {
+        message: "Expense added manually",
+        amountAdded: amount,
+      });
+    }
 
     return res.status(201).json(result);
   } catch (error) {
