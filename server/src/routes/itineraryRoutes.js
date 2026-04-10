@@ -5,6 +5,7 @@ const {
   getItinerary,
   updateItineraryItem,
   deleteItineraryItem,
+  toggleVisitedStatus,
 } = require("../controllers/itineraryController");
 
 const router = express.Router();
@@ -12,6 +13,7 @@ const router = express.Router();
 router.post("/:tripId", protect, addItineraryItem);
 router.get("/:tripId", protect, getItinerary);
 router.put("/:itemId", protect, updateItineraryItem);
+router.patch("/:itemId/toggle-visited", protect, toggleVisitedStatus);
 router.delete("/:itemId", protect, deleteItineraryItem);
 
 module.exports = router;
