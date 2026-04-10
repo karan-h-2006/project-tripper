@@ -65,8 +65,12 @@ const recordExpense = async (expenseData) => {
     }
   }
 
-  const balances = await calculateBalances(tripId, expense);
-  return { expense, balances };
+  const { simplifiedBalances, exactBalances } = await calculateBalances(tripId, expense);
+  return {
+    expense,
+    balances: simplifiedBalances,
+    personToPersonBalances: exactBalances,
+  };
 };
 
 const parseUpiMetadata = (description = "") => {

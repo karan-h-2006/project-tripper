@@ -1,5 +1,6 @@
 const { getLedgerSummary } = require("../services/ledgerService");
 const Trip = require("../models/Trip");
+const { calculateBalances } = require("../services/splitwiseService");
 
 const getLedger = async (req, res) => {
   try {
@@ -26,6 +27,7 @@ const getLedger = async (req, res) => {
       transactions,
       balances,
     } = ledger;
+    const { exactBalances } = await calculateBalances(tripId);
 
     return res.status(200).json({
       totalBudget,
@@ -33,6 +35,7 @@ const getLedger = async (req, res) => {
       remainingBudget,
       transactions,
       balances,
+      personToPersonBalances: exactBalances || [],
       members: trip.members || [],
     });
   } catch (error) {

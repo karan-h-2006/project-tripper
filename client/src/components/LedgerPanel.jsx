@@ -38,6 +38,7 @@ const LedgerPanel = ({ tripId, socket }) => {
     remainingBudget: 0,
     transactions: [],
     balances: [],
+    personToPersonBalances: [],
     members: [],
   });
   const [expandedTxnId, setExpandedTxnId] = useState(null);
@@ -80,62 +81,56 @@ const LedgerPanel = ({ tripId, socket }) => {
   const burnPercent = Math.min(Math.max(burnPercentRaw, 0), 100);
   const overspent = spent > budget && budget > 0;
   const personalizedBalances = useMemo(() => {
-    const rawBalances = Array.isArray(ledgerData.balances) ? ledgerData.balances : [];
+    const rawBalances = Array.isArray(ledgerData.personToPersonBalances)
+      ? ledgerData.personToPersonBalances
+      : [];
     const members = Array.isArray(ledgerData.members) ? ledgerData.members : [];
 
     if (!currentUserId || rawBalances.length === 0) {
       return { toPay: [], toReceive: [] };
     }
 
-    const netBalances = {};
-
     const getId = (value) => String(value?._id || value || "");
 
-    rawBalances.forEach((balance) => {
-      const fromId = getId(balance.from ?? balance.owes);
-      const toId = getId(balance.to);
-      const amount = Number(balance.amount || 0);
+    const toPay = rawBalances
+      .filter((edge) => getId(edge.from) === currentUserId)
+      .map((edge) => {
+        const otherUserId = getId(edge.to);
+        const otherUser =
+          members.find((m) => String(m._id) === otherUserId) || {
+            _id: otherUserId,
+            username: "Unknown Member",
+          };
 
-      if (!fromId || !toId || amount <= 0) return;
-
-      if (fromId === currentUserId) {
-        netBalances[toId] = (netBalances[toId] || 0) - amount;
-      } else if (toId === currentUserId) {
-        netBalances[fromId] = (netBalances[fromId] || 0) + amount;
-      }
-    });
-
-    const toPay = [];
-    const toReceive = [];
-
-    Object.keys(netBalances).forEach((otherUserId) => {
-      const netAmount = Number((netBalances[otherUserId] || 0).toFixed(2));
-      if (Math.abs(netAmount) < 0.01) return;
-
-      const otherUser =
-        members.find((m) => String(m._id) === otherUserId) || {
-          _id: otherUserId,
-          username: "Unknown Member",
+        return {
+          user: otherUser,
+          amount: Number(Number(edge.amount || 0).toFixed(2)),
         };
+      })
+      .filter((item) => item.amount > 0.01);
 
-      if (netAmount < 0) {
-        toPay.push({
+    const toReceive = rawBalances
+      .filter((edge) => getId(edge.to) === currentUserId)
+      .map((edge) => {
+        const otherUserId = getId(edge.from);
+        const otherUser =
+          members.find((m) => String(m._id) === otherUserId) || {
+            _id: otherUserId,
+            username: "Unknown Member",
+          };
+
+        return {
           user: otherUser,
-          amount: Number(Math.abs(netAmount).toFixed(2)),
-        });
-      } else {
-        toReceive.push({
-          user: otherUser,
-          amount: Number(netAmount.toFixed(2)),
-        });
-      }
-    });
+          amount: Number(Number(edge.amount || 0).toFixed(2)),
+        };
+      })
+      .filter((item) => item.amount > 0.01);
 
     toPay.sort((a, b) => b.amount - a.amount);
     toReceive.sort((a, b) => b.amount - a.amount);
 
     return { toPay, toReceive };
-  }, [ledgerData.balances, ledgerData.members, currentUserId]);
+  }, [ledgerData.personToPersonBalances, ledgerData.members, currentUserId]);
 
   return (
     <section className="bg-white rounded-2xl shadow-sm border border-gray-100 p-4 sm:p-5 space-y-5">
