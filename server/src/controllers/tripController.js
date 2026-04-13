@@ -25,6 +25,7 @@ const createTrip = async (req, res) => {
       join_code,
       admin: adminId,
       members: [adminId],
+      admins: [adminId],
     });
 
     await User.findByIdAndUpdate(adminId, {
@@ -69,7 +70,8 @@ const getTripById = async (req, res) => {
 
     const trip = await Trip.findById(id)
       .populate("admin", "-password")
-      .populate("members", "-password");
+      .populate("members", "username profilePic")
+      .populate("admins", "username profilePic");
 
     if (!trip) {
       return res.status(404).json({ message: "Trip not found" });

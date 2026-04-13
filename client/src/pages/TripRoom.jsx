@@ -9,6 +9,7 @@ import ActivityFeed from "../components/ActivityFeed.jsx";
 import ItineraryPanel from "../components/ItineraryPanel.jsx";
 import UpiScannerModal from "../components/UpiScannerModal.jsx";
 import LedgerPanel from "../components/LedgerPanel.jsx";
+import MembersPanel from "../components/MembersPanel.jsx";
 
 const TripRoom = () => {
   const { id } = useParams();
@@ -169,6 +170,8 @@ const TripRoom = () => {
             Record UPI expense
           </button>
         </section>
+
+        <MembersPanel tripData={trip} currentUserId={user?._id || ""} />
 
         <LedgerPanel tripId={id} socket={socket} />
         </div>
