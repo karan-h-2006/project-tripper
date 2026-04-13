@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { io } from 'socket.io-client';
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { ArrowLeft, IndianRupee, KeyRound, MapPinned, QrCode } from "lucide-react";
@@ -21,28 +21,33 @@ const TripRoom = () => {
   const [upiModalOpen, setUpiModalOpen] = useState(false);
   const [socket, setSocket] = useState(null);
 
-  useEffect(() => {
-    if (trip || !id) return;
-
-    const fetchTrip = async () => {
+  const fetchTripData = useCallback(
+    async ({ suppressRedirect = false } = {}) => {
+      if (!id) return;
       try {
-        // Assumes a GET /api/trips/:id endpoint that returns the trip.
-        // Adjust the path / response shape to match your backend.
         const res = await api.get(`/trips/${id}`);
         setTrip(res.data?.trip || res.data);
       } catch (error) {
-        const message =
-          error.response?.data?.message ||
-          "Failed to load trip. Returning to dashboard.";
-        toast.error(message);
-        navigate("/dashboard", { replace: true });
+        if (!suppressRedirect) {
+          const message =
+            error.response?.data?.message ||
+            "Failed to load trip. Returning to dashboard.";
+          toast.error(message);
+          navigate("/dashboard", { replace: true });
+        }
       } finally {
-        setLoading(false);
+        if (!suppressRedirect) {
+          setLoading(false);
+        }
       }
-    };
+    },
+    [id, navigate]
+  );
 
-    fetchTrip();
-  }, [id, trip, navigate]);
+  useEffect(() => {
+    if (trip || !id) return;
+    fetchTripData();
+  }, [id, trip, fetchTripData]);
 
   const handleRecorded = () => {
     // In future we can refetch balances or ledger here.
@@ -66,8 +71,8 @@ const TripRoom = () => {
 
     socket.on('budget_updated', (data) => {
         toast.success(data.message);
-        // fetchTripData(); 
     });
+    socket.on("trip_members_updated", () => fetchTripData({ suppressRedirect: true }));
 
     // Catch authentication errors sent by the backend
     socket.on('connect_error', (err) => {
@@ -76,10 +81,11 @@ const TripRoom = () => {
     });
 
     return () => {
+      socket.off("trip_members_updated");
       setSocket(null);
       socket.disconnect();
     };
-  }, [id]);
+  }, [id, fetchTripData]);
 
  
   if (loading) {

@@ -1,6 +1,28 @@
 const crypto = require("crypto");
 const Trip = require("../models/Trip");
 const User = require("../models/User");
+const Activity = require("../models/Activity");
+
+const getNormalizedUserId = (userLike) => {
+  if (!userLike) return "";
+  if (typeof userLike === "string") return userLike;
+  if (userLike._id) return userLike._id.toString();
+  return userLike.toString();
+};
+
+const isTripAdminUser = (trip, userId) => {
+  const normalizedUserId = getNormalizedUserId(userId);
+  const adminIds = Array.isArray(trip.admins)
+    ? trip.admins.map((adminId) => getNormalizedUserId(adminId))
+    : [];
+
+  // Backward-compatible support for trips that only have `admin` set.
+  const primaryAdminId = getNormalizedUserId(trip.admin);
+
+  return (
+    adminIds.includes(normalizedUserId) || primaryAdminId === normalizedUserId
+  );
+};
 
 const createTrip = async (req, res) => {
   try {
@@ -92,9 +114,145 @@ const getTripById = async (req, res) => {
   }
 };
 
+const promoteToAdmin = async (req, res) => {
+  try {
+    const { tripId, userId } = req.params;
+    const trip = await Trip.findById(tripId);
+
+    if (!trip) {
+      return res.status(404).json({ message: "Trip not found" });
+    }
+
+    const requesterId = req.user && (req.user.id || req.user._id);
+    const isRequesterAdmin = isTripAdminUser(trip, requesterId);
+
+    if (!isRequesterAdmin) {
+      return res.status(403).json({ message: "Forbidden" });
+    }
+
+    const currentAdminIds = Array.isArray(trip.admins)
+      ? trip.admins.map((id) => id.toString())
+      : [];
+    trip.admins = Array.from(new Set([...currentAdminIds, userId.toString()]));
+    await trip.save();
+
+    const io = req.app.get("io");
+    const newActivity = await Activity.create({
+      tripId,
+      userId: requesterId,
+      text: `${req.user.username} promoted a user to Admin`,
+      type: "system",
+    });
+    await newActivity.populate("userId", "username profilePic");
+
+    if (io) {
+      const roomString = tripId.toString();
+      io.to(roomString).emit("receive_message", newActivity);
+      io.to(roomString).emit("trip_members_updated");
+    }
+
+    return res.status(200).json(trip);
+  } catch (error) {
+    console.error("Promote to admin error:", error);
+    return res.status(500).json({ message: "Server error" });
+  }
+};
+
+const demoteFromAdmin = async (req, res) => {
+  try {
+    const { tripId, userId } = req.params;
+    const trip = await Trip.findById(tripId);
+
+    if (!trip) {
+      return res.status(404).json({ message: "Trip not found" });
+    }
+
+    const requesterId = req.user && (req.user.id || req.user._id);
+    const isRequesterAdmin = isTripAdminUser(trip, requesterId);
+
+    if (!isRequesterAdmin) {
+      return res.status(403).json({ message: "Forbidden" });
+    }
+
+    trip.admins = (trip.admins || []).filter(
+      (adminId) => adminId.toString() !== userId.toString()
+    );
+    await trip.save();
+
+    const io = req.app.get("io");
+    const newActivity = await Activity.create({
+      tripId,
+      userId: requesterId,
+      text: `${req.user.username} removed Admin privileges from a user`,
+      type: "system",
+    });
+    await newActivity.populate("userId", "username profilePic");
+
+    if (io) {
+      const roomString = tripId.toString();
+      io.to(roomString).emit("receive_message", newActivity);
+      io.to(roomString).emit("trip_members_updated");
+    }
+
+    return res.status(200).json(trip);
+  } catch (error) {
+    console.error("Demote from admin error:", error);
+    return res.status(500).json({ message: "Server error" });
+  }
+};
+
+const kickMember = async (req, res) => {
+  try {
+    const { tripId, userId } = req.params;
+    const trip = await Trip.findById(tripId);
+
+    if (!trip) {
+      return res.status(404).json({ message: "Trip not found" });
+    }
+
+    const requesterId = req.user && (req.user.id || req.user._id);
+    const isRequesterAdmin = isTripAdminUser(trip, requesterId);
+
+    if (!isRequesterAdmin) {
+      return res.status(403).json({ message: "Forbidden" });
+    }
+
+    trip.members = trip.members.filter(
+      (memberId) => memberId.toString() !== userId.toString()
+    );
+    trip.admins = (trip.admins || []).filter(
+      (adminId) => adminId.toString() !== userId.toString()
+    );
+    await trip.save();
+
+    const io = req.app.get("io");
+    const newActivity = await Activity.create({
+      tripId,
+      userId: requesterId,
+      text: `${req.user.username} kicked a user from the trip`,
+      type: "system",
+    });
+    await newActivity.populate("userId", "username profilePic");
+
+    if (io) {
+      const roomString = tripId.toString();
+      io.to(roomString).emit("receive_message", newActivity);
+      io.to(roomString).emit("trip_members_updated");
+    }
+
+    return res.status(200).json(trip);
+  } catch (error) {
+    console.error("Kick member error:", error);
+    return res.status(500).json({ message: "Server error" });
+  }
+};
+
 module.exports = {
   createTrip,
   getMyTrips,
   getTripById,
+  promoteToAdmin,
+  demoteFromAdmin,
+  kickMember,
 };
 
