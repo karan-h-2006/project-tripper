@@ -84,13 +84,13 @@ const getMyTrips = async (req, res) => {
 const getTripById = async (req, res) => {
   try {
     const userId = req.user && (req.user.id || req.user._id);
-    const { id } = req.params;
+    const tripId = req.params.tripId || req.params.id;
 
     if (!userId) {
       return res.status(401).json({ message: "Not authorized" });
     }
 
-    const trip = await Trip.findById(id)
+    const trip = await Trip.findById(tripId)
       .populate("admin", "-password")
       .populate("members", "username profilePic")
       .populate("admins", "username profilePic");
@@ -100,7 +100,7 @@ const getTripById = async (req, res) => {
     }
 
     const isMember = trip.members.some(
-      (memberId) => memberId.toString() === userId.toString()
+      (member) => getNormalizedUserId(member) === userId.toString()
     );
 
     if (!isMember) {
@@ -238,6 +238,9 @@ const kickMember = async (req, res) => {
       const roomString = tripId.toString();
       io.to(roomString).emit("receive_message", newActivity);
       io.to(roomString).emit("trip_members_updated");
+      io.to(roomString).emit("user_kicked", {
+        userId: req.params.userId.toString(),
+      });
     }
 
     return res.status(200).json(trip);

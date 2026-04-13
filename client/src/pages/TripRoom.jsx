@@ -13,9 +13,11 @@ import MembersPanel from "../components/MembersPanel.jsx";
 
 const TripRoom = () => {
   const { id } = useParams();
+  const tripId = id;
   const navigate = useNavigate();
   const location = useLocation();
   const { user } = useAuth();
+  const currentUserId = user?._id || "";
   const [trip, setTrip] = useState(location.state?.trip || null);
   const [loading, setLoading] = useState(!location.state?.trip);
   const [upiModalOpen, setUpiModalOpen] = useState(false);
@@ -54,38 +56,71 @@ const TripRoom = () => {
   };
 
   useEffect(() => {
-    // Grab the token from localStorage (or your AuthContext)
-    const token = localStorage.getItem('tripper_token'); // Adjust this if you store it differently!
-
-    // Pass the token in the auth object
-    const socket = io('http://localhost:5000', {
-      auth: {
-        token: token
-      }
+    const token = localStorage.getItem("tripper_token");
+    const socketClient = io("http://localhost:5000", {
+      auth: { token },
     });
-    setSocket(socket);
+    setSocket(socketClient);
 
     if (id) {
-      socket.emit('join_trip_room', id);
+      socketClient.emit("join_trip_room", id);
     }
 
-    socket.on('budget_updated', (data) => {
-        toast.success(data.message);
+    socketClient.on("budget_updated", (data) => {
+      toast.success(data.message);
     });
-    socket.on("trip_members_updated", () => fetchTripData({ suppressRedirect: true }));
 
-    // Catch authentication errors sent by the backend
-    socket.on('connect_error', (err) => {
-      console.error('Socket connection failed:', err.message);
-      toast.error('Real-time connection failed. Please log in again.');
+    socketClient.on("connect_error", (err) => {
+      console.error("Socket connection failed:", err.message);
+      toast.error("Real-time connection failed. Please log in again.");
     });
 
     return () => {
-      socket.off("trip_members_updated");
       setSocket(null);
-      socket.disconnect();
+      socketClient.disconnect();
     };
-  }, [id, fetchTripData]);
+  }, [id]);
+
+  useEffect(() => {
+    if (!socket || !tripId) return;
+
+    const refreshTripData = async () => {
+      try {
+        const res = await api.get(`/trips/${tripId}`);
+        setTrip(res.data?.trip || res.data);
+      } catch (error) {
+        console.error("Trip refresh failed:", error?.response?.data || error.message);
+      }
+    };
+
+    socket.on("trip_members_updated", refreshTripData);
+    socket.on("user_kicked", (payload) => {
+      const kickedId = String(payload?.userId);
+      let activeUserId = String(currentUserId);
+
+      try {
+        const localUser = JSON.parse(localStorage.getItem("user"));
+        if (localUser && localUser._id) {
+          activeUserId = String(localUser._id);
+        }
+      } catch (e) {
+        // Ignore malformed local storage fallback values.
+      }
+
+      console.log(`[Socket] Kick event received for: ${kickedId}. My ID is: ${activeUserId}`);
+
+      if (kickedId === activeUserId) {
+        toast.error("You have been removed from the trip by an Admin.");
+        socket.emit("leave_room", tripId);
+        navigate("/dashboard");
+      }
+    });
+
+    return () => {
+      socket.off("trip_members_updated", refreshTripData);
+      socket.off("user_kicked");
+    };
+  }, [socket, tripId, currentUserId, navigate]);
 
  
   if (loading) {
@@ -177,7 +212,11 @@ const TripRoom = () => {
           </button>
         </section>
 
-        <MembersPanel tripData={trip} currentUserId={user?._id || ""} />
+        <MembersPanel
+          tripData={trip}
+          currentUserId={currentUserId}
+          onMembersChanged={fetchTripData}
+        />
 
         <LedgerPanel tripId={id} socket={socket} />
         </div>
@@ -186,7 +225,7 @@ const TripRoom = () => {
           <ActivityFeed
             tripId={id}
             socket={socket}
-            currentUserId={user?._id || ""}
+            currentUserId={currentUserId}
           />
         </section>
       </main>

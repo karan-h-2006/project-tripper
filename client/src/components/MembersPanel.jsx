@@ -1,7 +1,7 @@
 import toast from "react-hot-toast";
 import api from "../api/axios";
 
-const MembersPanel = ({ tripData, currentUserId }) => {
+const MembersPanel = ({ tripData, currentUserId, onMembersChanged }) => {
   const members = Array.isArray(tripData?.members) ? tripData.members : [];
   const adminsFromArray = Array.isArray(tripData?.admins) ? tripData.admins : [];
   const admins = adminsFromArray.length
@@ -28,6 +28,9 @@ const MembersPanel = ({ tripData, currentUserId }) => {
     try {
       await api.put(`/trips/${tripId}/promote/${memberId}`);
       toast.success("Member promoted to admin");
+      if (onMembersChanged) {
+        await onMembersChanged({ suppressRedirect: true });
+      }
     } catch (error) {
       toast.error(error?.response?.data?.message || "Failed to promote member");
     }
@@ -37,6 +40,9 @@ const MembersPanel = ({ tripData, currentUserId }) => {
     try {
       await api.put(`/trips/${tripId}/demote/${memberId}`);
       toast.success("Admin privileges removed");
+      if (onMembersChanged) {
+        await onMembersChanged({ suppressRedirect: true });
+      }
     } catch (error) {
       toast.error(error?.response?.data?.message || "Failed to demote admin");
     }
@@ -46,6 +52,9 @@ const MembersPanel = ({ tripData, currentUserId }) => {
     try {
       await api.delete(`/trips/${tripId}/kick/${memberId}`);
       toast.success("Member removed from trip");
+      if (onMembersChanged) {
+        await onMembersChanged({ suppressRedirect: true });
+      }
     } catch (error) {
       toast.error(error?.response?.data?.message || "Failed to remove member");
     }
