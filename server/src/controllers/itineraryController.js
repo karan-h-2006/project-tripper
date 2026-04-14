@@ -20,7 +20,7 @@ const isValidCoordinates = (coordinates) => {
 };
 
 const ensureTripExistsAndMember = async ({ tripId, userId }) => {
-  const trip = await Trip.findById(tripId).select("_id members");
+  const trip = await Trip.findById(tripId).select("_id members status");
   if (!trip) {
     return { ok: false, status: 404, message: "Trip not found" };
   }
@@ -78,6 +78,11 @@ const addItineraryItem = async (req, res) => {
     const membership = await ensureTripExistsAndMember({ tripId, userId });
     if (!membership.ok) {
       return res.status(membership.status).json({ message: membership.message });
+    }
+    if (membership.trip.status === "ended") {
+      return res.status(403).json({
+        message: "This trip has ended. No further transactions are allowed.",
+      });
     }
 
     const item = await ItineraryItem.create({
@@ -267,6 +272,11 @@ const toggleVisitedStatus = async (req, res) => {
     });
     if (!membership.ok) {
       return res.status(membership.status).json({ message: membership.message });
+    }
+    if (membership.trip.status === "ended") {
+      return res.status(403).json({
+        message: "This trip has ended. No further transactions are allowed.",
+      });
     }
 
     item.visited = !item.visited;

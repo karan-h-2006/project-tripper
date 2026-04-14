@@ -1,5 +1,6 @@
 const { recordExpense } = require("../services/ledgerService");
 const Activity = require("../models/Activity");
+const Trip = require("../models/Trip");
 
 const createExpense = async (req, res) => {
   try {
@@ -18,6 +19,17 @@ const createExpense = async (req, res) => {
     }
 
     const io = req.app.get("io");
+    const trip = await Trip.findById(tripId).select("status");
+
+    if (!trip) {
+      return res.status(404).json({ message: "Trip not found" });
+    }
+
+    if (trip.status === "ended") {
+      return res.status(403).json({
+        message: "This trip has ended. No further transactions are allowed.",
+      });
+    }
 
     const result = await recordExpense({
       tripId,

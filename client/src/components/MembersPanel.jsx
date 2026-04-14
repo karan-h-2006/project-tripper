@@ -23,6 +23,7 @@ const MembersPanel = ({ tripData, currentUserId, onMembersChanged }) => {
   const isCurrentUserAdmin = admins.some(
     (admin) => getUserId(admin) === getUserId(currentUserId)
   );
+  const isTripEnded = tripData?.status === "ended";
 
   const handlePromote = async (memberId) => {
     try {
@@ -60,8 +61,68 @@ const MembersPanel = ({ tripData, currentUserId, onMembersChanged }) => {
     }
   };
 
+  const handleUpdateBudget = async () => {
+    const enteredValue = window.prompt("Enter the new trip budget (INR):");
+    if (enteredValue === null) return;
+
+    const newBudget = Number(enteredValue);
+    if (!Number.isFinite(newBudget) || newBudget < 0) {
+      toast.error("Please enter a valid non-negative number");
+      return;
+    }
+
+    try {
+      await api.put(`/trips/${tripId}/budget`, { newBudget });
+      toast.success("Trip budget updated");
+      if (onMembersChanged) {
+        await onMembersChanged({ suppressRedirect: true });
+      }
+    } catch (error) {
+      toast.error(error?.response?.data?.message || "Failed to update budget");
+    }
+  };
+
+  const handleEndTrip = async () => {
+    const confirmed = window.confirm(
+      "Are you sure you want to end this trip? This will lock all further financial and itinerary changes."
+    );
+    if (!confirmed) return;
+
+    try {
+      await api.put(`/trips/${tripId}/end`);
+      toast.success("Trip ended successfully");
+      if (onMembersChanged) {
+        await onMembersChanged({ suppressRedirect: true });
+      }
+    } catch (error) {
+      toast.error(error?.response?.data?.message || "Failed to end trip");
+    }
+  };
+
   return (
     <section className="bg-white rounded-2xl shadow-md border border-gray-100 p-4 sm:p-5">
+      {isCurrentUserAdmin && !isTripEnded && (
+        <div className="mb-4 rounded-xl border border-indigo-100 bg-indigo-50 p-3">
+          <h3 className="text-sm font-semibold text-indigo-900">Admin Actions</h3>
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={handleUpdateBudget}
+              className="rounded-md bg-indigo-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-indigo-700"
+            >
+              Update Budget
+            </button>
+            <button
+              type="button"
+              onClick={handleEndTrip}
+              className="rounded-md bg-red-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-red-700"
+            >
+              End Trip
+            </button>
+          </div>
+        </div>
+      )}
+
       <h2 className="text-sm font-semibold text-gray-900">Members</h2>
       <p className="mt-1 text-xs text-gray-500">People in this trip and their roles.</p>
 

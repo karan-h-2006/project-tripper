@@ -19,7 +19,7 @@ const parseUpiUrl = (upiString) => {
   }
 };
 
-const UpiScannerModal = ({ open, onClose, tripId, onRecorded }) => {
+const UpiScannerModal = ({ open, onClose, tripId, onRecorded, isTripEnded = false }) => {
   const [scanStep, setScanStep] = useState("scanning");
   const [scannerError, setScannerError] = useState("");
   const [form, setForm] = useState({
@@ -101,6 +101,10 @@ const UpiScannerModal = ({ open, onClose, tripId, onRecorded }) => {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    if (isTripEnded) {
+      toast.error("This trip has ended. No further transactions are allowed.");
+      return;
+    }
     if (!tripId) {
       toast.error("Missing trip information");
       return;
@@ -165,6 +169,11 @@ const UpiScannerModal = ({ open, onClose, tripId, onRecorded }) => {
         </div>
 
         <div className="p-4 space-y-4">
+          {isTripEnded && (
+            <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs font-medium text-red-700">
+              This trip has ended. Add expense is disabled.
+            </div>
+          )}
           {scanStep === "scanning" && (
             <div className="space-y-3">
               <div
@@ -271,7 +280,7 @@ const UpiScannerModal = ({ open, onClose, tripId, onRecorded }) => {
 
               <button
                 type="submit"
-                disabled={submitting}
+                disabled={submitting || isTripEnded}
                 className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-indigo-600 px-3 py-2 text-xs font-medium text-white shadow-md hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:opacity-60 disabled:cursor-not-allowed transition"
               >
                 {submitting ? "Recording..." : "Record expense"}
@@ -289,6 +298,7 @@ UpiScannerModal.propTypes = {
   onClose: PropTypes.func.isRequired,
   tripId: PropTypes.string,
   onRecorded: PropTypes.func,
+  isTripEnded: PropTypes.bool,
 };
 
 export default UpiScannerModal;

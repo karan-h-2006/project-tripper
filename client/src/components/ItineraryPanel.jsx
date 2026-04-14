@@ -3,7 +3,7 @@ import PropTypes from "prop-types";
 import { CalendarClock, IndianRupee, MapPin } from "lucide-react";
 import api from "../api/axios";
 
-const ItineraryPanel = ({ tripId, socket }) => {
+const ItineraryPanel = ({ tripId, socket, isTripEnded = false }) => {
   const [itineraryItems, setItineraryItems] = useState([]);
   const [remainingBudget, setRemainingBudget] = useState(0);
   const [unvisitedCost, setUnvisitedCost] = useState(0);
@@ -27,6 +27,7 @@ const ItineraryPanel = ({ tripId, socket }) => {
   }, [tripId]);
 
   const handleToggle = async (itemId) => {
+    if (isTripEnded) return;
     try {
       await api.patch(`/itinerary/${itemId}/toggle-visited`);
       await fetchItineraryList();
@@ -93,6 +94,7 @@ const ItineraryPanel = ({ tripId, socket }) => {
                     type="checkbox"
                     checked={Boolean(item.visited)}
                     onChange={() => handleToggle(item._id)}
+                    disabled={isTripEnded}
                     className="mt-0.5 h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
                   />
                   <p
@@ -140,6 +142,7 @@ const ItineraryPanel = ({ tripId, socket }) => {
 
 ItineraryPanel.propTypes = {
   tripId: PropTypes.string.isRequired,
+  isTripEnded: PropTypes.bool,
   socket: PropTypes.shape({
     on: PropTypes.func,
     off: PropTypes.func,
@@ -147,6 +150,7 @@ ItineraryPanel.propTypes = {
 };
 
 ItineraryPanel.defaultProps = {
+  isTripEnded: false,
   socket: null,
 };
 

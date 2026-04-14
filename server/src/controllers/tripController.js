@@ -250,6 +250,98 @@ const kickMember = async (req, res) => {
   }
 };
 
+const updateTripBudget = async (req, res) => {
+  try {
+    const { tripId } = req.params;
+    const { newBudget } = req.body;
+    const requesterId = req.user && (req.user.id || req.user._id);
+
+    if (!requesterId) {
+      return res.status(401).json({ message: "Not authorized" });
+    }
+
+    const parsedBudget = Number(newBudget);
+    if (!Number.isFinite(parsedBudget) || parsedBudget < 0) {
+      return res.status(400).json({ message: "newBudget must be a valid number" });
+    }
+
+    const trip = await Trip.findById(tripId);
+    if (!trip) {
+      return res.status(404).json({ message: "Trip not found" });
+    }
+
+    if (!isTripAdminUser(trip, requesterId)) {
+      return res.status(403).json({ message: "Forbidden" });
+    }
+
+    trip.total_budget = parsedBudget;
+    await trip.save();
+
+    const io = req.app.get("io");
+    const activity = await Activity.create({
+      tripId,
+      userId: requesterId,
+      text: `${req.user.username} updated the trip budget to ₹${parsedBudget}`,
+      type: "system",
+    });
+    await activity.populate("userId", "username profilePic");
+
+    if (io) {
+      const roomString = tripId.toString();
+      io.to(roomString).emit("budget_updated");
+      io.to(roomString).emit("receive_message", activity);
+    }
+
+    return res.status(200).json({ trip });
+  } catch (error) {
+    console.error("Update trip budget error:", error);
+    return res.status(500).json({ message: "Server error" });
+  }
+};
+
+const endTrip = async (req, res) => {
+  try {
+    const { tripId } = req.params;
+    const requesterId = req.user && (req.user.id || req.user._id);
+
+    if (!requesterId) {
+      return res.status(401).json({ message: "Not authorized" });
+    }
+
+    const trip = await Trip.findById(tripId);
+    if (!trip) {
+      return res.status(404).json({ message: "Trip not found" });
+    }
+
+    if (!isTripAdminUser(trip, requesterId)) {
+      return res.status(403).json({ message: "Forbidden" });
+    }
+
+    trip.status = "ended";
+    await trip.save();
+
+    const io = req.app.get("io");
+    const activity = await Activity.create({
+      tripId,
+      userId: requesterId,
+      text: `🛑 ${req.user.username} ended the trip. No further expenses can be added.`,
+      type: "system",
+    });
+    await activity.populate("userId", "username profilePic");
+
+    if (io) {
+      const roomString = tripId.toString();
+      io.to(roomString).emit("trip_ended");
+      io.to(roomString).emit("receive_message", activity);
+    }
+
+    return res.status(200).json({ trip });
+  } catch (error) {
+    console.error("End trip error:", error);
+    return res.status(500).json({ message: "Server error" });
+  }
+};
+
 module.exports = {
   createTrip,
   getMyTrips,
@@ -257,5 +349,7 @@ module.exports = {
   promoteToAdmin,
   demoteFromAdmin,
   kickMember,
+  updateTripBudget,
+  endTrip,
 };
 

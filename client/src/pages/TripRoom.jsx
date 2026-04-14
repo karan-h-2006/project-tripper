@@ -67,7 +67,9 @@ const TripRoom = () => {
     }
 
     socketClient.on("budget_updated", (data) => {
-      toast.success(data.message);
+      if (data?.message) {
+        toast.success(data.message);
+      }
     });
 
     socketClient.on("connect_error", (err) => {
@@ -84,16 +86,13 @@ const TripRoom = () => {
   useEffect(() => {
     if (!socket || !tripId) return;
 
-    const refreshTripData = async () => {
-      try {
-        const res = await api.get(`/trips/${tripId}`);
-        setTrip(res.data?.trip || res.data);
-      } catch (error) {
-        console.error("Trip refresh failed:", error?.response?.data || error.message);
-      }
+    const refreshTripData = () => {
+      fetchTripData({ suppressRedirect: true });
     };
 
+    socket.on("budget_updated", refreshTripData);
     socket.on("trip_members_updated", refreshTripData);
+    socket.on("trip_ended", refreshTripData);
     socket.on("user_kicked", (payload) => {
       const kickedId = String(payload?.userId);
       let activeUserId = String(currentUserId);
@@ -117,10 +116,12 @@ const TripRoom = () => {
     });
 
     return () => {
+      socket.off("budget_updated", refreshTripData);
       socket.off("trip_members_updated", refreshTripData);
+      socket.off("trip_ended", refreshTripData);
       socket.off("user_kicked");
     };
-  }, [socket, tripId, currentUserId, navigate]);
+  }, [socket, tripId, currentUserId, navigate, fetchTripData]);
 
  
   if (loading) {
@@ -137,6 +138,8 @@ const TripRoom = () => {
   if (!trip) {
     return null;
   }
+
+  const isTripEnded = trip.status === "ended";
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -166,8 +169,14 @@ const TripRoom = () => {
       </header>
 
       <main className="max-w-7xl mx-auto px-4 py-6 grid grid-cols-1 lg:grid-cols-12 gap-5">
+        {isTripEnded && (
+          <div className="lg:col-span-12 bg-red-100 text-red-800 p-3 text-center font-bold rounded-xl border border-red-200">
+            This trip has ended. The ledger is locked and balances are final.
+          </div>
+        )}
+
         <section className="lg:col-span-4">
-          <ItineraryPanel tripId={id} socket={socket} />
+          <ItineraryPanel tripId={id} socket={socket} isTripEnded={isTripEnded} />
         </section>
 
         <div className="lg:col-span-5 space-y-5 min-h-0">
@@ -202,14 +211,16 @@ const TripRoom = () => {
             </div>
           </div>
 
-          <button
-            type="button"
-            onClick={() => setUpiModalOpen(true)}
-            className="inline-flex items-center justify-center gap-2 rounded-xl bg-indigo-600 px-4 py-2 text-sm font-medium text-white shadow-md hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-          >
-            <QrCode className="w-4 h-4" />
-            Record UPI expense
-          </button>
+          {!isTripEnded && (
+            <button
+              type="button"
+              onClick={() => setUpiModalOpen(true)}
+              className="inline-flex items-center justify-center gap-2 rounded-xl bg-indigo-600 px-4 py-2 text-sm font-medium text-white shadow-md hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            >
+              <QrCode className="w-4 h-4" />
+              Scan & Pay
+            </button>
+          )}
         </section>
 
         <MembersPanel
@@ -235,6 +246,7 @@ const TripRoom = () => {
         onClose={() => setUpiModalOpen(false)}
         tripId={trip._id}
         onRecorded={handleRecorded}
+        isTripEnded={isTripEnded}
       />
     </div>
   );
