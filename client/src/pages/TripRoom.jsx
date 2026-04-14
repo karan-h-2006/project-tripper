@@ -176,7 +176,13 @@ const TripRoom = () => {
         )}
 
         <section className="lg:col-span-4">
-          <ItineraryPanel tripId={id} socket={socket} isTripEnded={isTripEnded} />
+          <ItineraryPanel
+            tripId={id}
+            socket={socket}
+            isTripEnded={isTripEnded}
+            tripData={trip}
+            currentUserId={currentUserId}
+          />
         </section>
 
         <div className="lg:col-span-5 space-y-5 min-h-0">

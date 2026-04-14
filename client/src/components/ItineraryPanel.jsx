@@ -1,12 +1,25 @@
 import { useCallback, useEffect, useState } from "react";
 import PropTypes from "prop-types";
-import { CalendarClock, IndianRupee, MapPin } from "lucide-react";
+import { CalendarClock, IndianRupee, MapPin, Pencil, Plus, Trash2 } from "lucide-react";
+import toast from "react-hot-toast";
 import api from "../api/axios";
 
-const ItineraryPanel = ({ tripId, socket, isTripEnded = false }) => {
+const ItineraryPanel = ({ tripId, socket, isTripEnded = false, tripData, currentUserId }) => {
   const [itineraryItems, setItineraryItems] = useState([]);
   const [remainingBudget, setRemainingBudget] = useState(0);
   const [unvisitedCost, setUnvisitedCost] = useState(0);
+  const [showAddForm, setShowAddForm] = useState(false);
+  const [editingItemId, setEditingItemId] = useState(null);
+  const [formData, setFormData] = useState({
+    location_name: "",
+    estimated_cost: "",
+    scheduled_time: "",
+  });
+
+  const isCurrentUserAdmin = Array.isArray(tripData?.admins)
+    ? tripData.admins.some((admin) => String(admin?._id || admin) === String(currentUserId))
+    : false;
+  const isTripLocked = tripData?.status === "ended" || isTripEnded;
 
   const fetchItineraryList = useCallback(async () => {
     if (!tripId) return;
@@ -27,12 +40,70 @@ const ItineraryPanel = ({ tripId, socket, isTripEnded = false }) => {
   }, [tripId]);
 
   const handleToggle = async (itemId) => {
-    if (isTripEnded) return;
+    if (isTripLocked) return;
     try {
       await api.patch(`/itinerary/${itemId}/toggle-visited`);
       await fetchItineraryList();
     } catch (error) {
       console.error("Failed to toggle visited status:", error);
+    }
+  };
+
+  const resetForm = () => {
+    setFormData({
+      location_name: "",
+      estimated_cost: "",
+      scheduled_time: "",
+    });
+    setEditingItemId(null);
+    setShowAddForm(false);
+  };
+
+  const handleEditStart = (item) => {
+    setEditingItemId(item._id);
+    setShowAddForm(true);
+    setFormData({
+      location_name: item.location_name || "",
+      estimated_cost: String(item.estimated_cost ?? ""),
+      scheduled_time: item.scheduled_time
+        ? new Date(item.scheduled_time).toISOString().slice(0, 16)
+        : "",
+    });
+  };
+
+  const handleDelete = async (itemId) => {
+    try {
+      await api.delete(`/itinerary/${itemId}`);
+      toast.success("Itinerary stop deleted");
+    } catch (error) {
+      toast.error(error?.response?.data?.message || "Failed to delete stop");
+    }
+  };
+
+  const handleSubmit = async (event) => {
+    event.preventDefault();
+    const payload = {
+      location_name: formData.location_name.trim(),
+      estimated_cost: Number(formData.estimated_cost || 0),
+      scheduled_time: formData.scheduled_time,
+    };
+
+    if (!payload.location_name || !payload.scheduled_time) {
+      toast.error("Location and schedule are required");
+      return;
+    }
+
+    try {
+      if (editingItemId) {
+        await api.put(`/itinerary/${editingItemId}`, payload);
+        toast.success("Itinerary stop updated");
+      } else {
+        await api.post(`/itinerary/${tripId}`, payload);
+        toast.success("Itinerary stop added");
+      }
+      resetForm();
+    } catch (error) {
+      toast.error(error?.response?.data?.message || "Failed to save itinerary stop");
     }
   };
 
@@ -64,6 +135,77 @@ const ItineraryPanel = ({ tripId, socket, isTripEnded = false }) => {
         <span className="text-xs text-gray-500">{itineraryItems.length} stops</span>
       </div>
 
+      {isCurrentUserAdmin && !isTripLocked && (
+        <div className="mt-3">
+          <button
+            type="button"
+            onClick={() => {
+              if (showAddForm && !editingItemId) {
+                resetForm();
+                return;
+              }
+              setShowAddForm(true);
+              setEditingItemId(null);
+              setFormData({ location_name: "", estimated_cost: "", scheduled_time: "" });
+            }}
+            className="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-indigo-700"
+          >
+            <Plus className="h-3.5 w-3.5" />
+            Add Stop
+          </button>
+        </div>
+      )}
+
+      {isCurrentUserAdmin && !isTripLocked && showAddForm && (
+        <form onSubmit={handleSubmit} className="mt-3 rounded-xl border border-gray-200 bg-gray-50 p-3 space-y-3">
+          <input
+            type="text"
+            value={formData.location_name}
+            onChange={(event) =>
+              setFormData((prev) => ({ ...prev, location_name: event.target.value }))
+            }
+            className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none focus:border-indigo-500"
+            placeholder="Location name"
+          />
+          <div className="grid grid-cols-1 gap-2">
+            <input
+              type="number"
+              min="0"
+              step="0.01"
+              value={formData.estimated_cost}
+              onChange={(event) =>
+                setFormData((prev) => ({ ...prev, estimated_cost: event.target.value }))
+              }
+              className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none focus:border-indigo-500"
+              placeholder="Estimated cost"
+            />
+            <input
+              type="datetime-local"
+              value={formData.scheduled_time}
+              onChange={(event) =>
+                setFormData((prev) => ({ ...prev, scheduled_time: event.target.value }))
+              }
+              className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none focus:border-indigo-500"
+            />
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              type="submit"
+              className="rounded-lg bg-green-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-green-700"
+            >
+              {editingItemId ? "Save Changes" : "Add Stop"}
+            </button>
+            <button
+              type="button"
+              onClick={resetForm}
+              className="rounded-lg bg-gray-200 px-3 py-1.5 text-xs font-medium text-gray-800 hover:bg-gray-300"
+            >
+              Cancel
+            </button>
+          </div>
+        </form>
+      )}
+
       <div className="mt-4 space-y-4 max-h-[600px] overflow-y-auto pr-1">
         {itineraryItems.length === 0 ? (
           <div className="rounded-xl border border-dashed border-gray-200 p-4 text-center">
@@ -89,12 +231,13 @@ const ItineraryPanel = ({ tripId, socket, isTripEnded = false }) => {
                     : "border-gray-100 bg-gray-50/60"
                 }`}
               >
-                <div className="flex items-start gap-2">
+                <div className="flex items-start justify-between gap-2">
+                  <div className="flex items-start gap-2">
                   <input
                     type="checkbox"
                     checked={Boolean(item.visited)}
                     onChange={() => handleToggle(item._id)}
-                    disabled={isTripEnded}
+                    disabled={isTripLocked}
                     className="mt-0.5 h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
                   />
                   <p
@@ -104,6 +247,27 @@ const ItineraryPanel = ({ tripId, socket, isTripEnded = false }) => {
                   >
                     {item.location_name}
                   </p>
+                  </div>
+                  {isCurrentUserAdmin && !isTripLocked && (
+                    <div className="flex items-center gap-1">
+                      <button
+                        type="button"
+                        onClick={() => handleEditStart(item)}
+                        className="rounded p-1 text-amber-600 hover:bg-amber-50"
+                        title="Edit stop"
+                      >
+                        <Pencil className="h-3.5 w-3.5" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleDelete(item._id)}
+                        className="rounded p-1 text-red-600 hover:bg-red-50"
+                        title="Delete stop"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+                  )}
                 </div>
 
                 <div className="mt-2 flex flex-wrap items-center gap-3 text-xs text-gray-600">
@@ -142,6 +306,11 @@ const ItineraryPanel = ({ tripId, socket, isTripEnded = false }) => {
 
 ItineraryPanel.propTypes = {
   tripId: PropTypes.string.isRequired,
+  tripData: PropTypes.shape({
+    admins: PropTypes.arrayOf(PropTypes.oneOfType([PropTypes.string, PropTypes.object])),
+    status: PropTypes.string,
+  }),
+  currentUserId: PropTypes.string,
   isTripEnded: PropTypes.bool,
   socket: PropTypes.shape({
     on: PropTypes.func,
@@ -150,6 +319,8 @@ ItineraryPanel.propTypes = {
 };
 
 ItineraryPanel.defaultProps = {
+  tripData: null,
+  currentUserId: "",
   isTripEnded: false,
   socket: null,
 };
