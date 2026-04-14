@@ -21,6 +21,12 @@ const tripSchema = new mongoose.Schema(
       ref: "User",
       required: true,
     },
+    admins: [
+      {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "User",
+      },
+    ],
     members: [
       {
         type: mongoose.Schema.Types.ObjectId,
@@ -36,6 +42,11 @@ const tripSchema = new mongoose.Schema(
         type: mongoose.Schema.Types.Mixed,
       },
     ],
+    status: {
+      type: String,
+      enum: ["active", "ended"],
+      default: "active",
+    },
   },
   {
     timestamps: true,

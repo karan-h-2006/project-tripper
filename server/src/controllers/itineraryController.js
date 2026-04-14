@@ -2,6 +2,7 @@ const mongoose = require("mongoose");
 const Trip = require("../models/Trip");
 const ItineraryItem = require("../models/ItineraryItem");
 const Expense = require("../models/Expense");
+const Activity = require("../models/Activity");
 const { optimizeItinerary } = require("../services/aiService");
 
 const getUserIdFromReq = (req) => (req.user && (req.user.id || req.user._id)) || null;
@@ -20,7 +21,7 @@ const isValidCoordinates = (coordinates) => {
 };
 
 const ensureTripExistsAndMember = async ({ tripId, userId }) => {
-  const trip = await Trip.findById(tripId).select("_id members");
+  const trip = await Trip.findById(tripId).select("_id members status");
   if (!trip) {
     return { ok: false, status: 404, message: "Trip not found" };
   }
@@ -31,6 +32,30 @@ const ensureTripExistsAndMember = async ({ tripId, userId }) => {
 
   if (!isMember) {
     return { ok: false, status: 403, message: "Forbidden" };
+  }
+
+  return { ok: true, trip };
+};
+
+const ensureTripAdminCanModify = async ({ tripId, userId }) => {
+  const trip = await Trip.findById(tripId).select("_id admins status");
+  if (!trip) {
+    return { ok: false, status: 404, message: "Trip not found" };
+  }
+
+  if (trip.status === "ended") {
+    return { ok: false, status: 403, message: "Trip has ended." };
+  }
+
+  const isAdmin = Array.isArray(trip.admins)
+    ? trip.admins.some((adminId) => adminId.toString() === userId.toString())
+    : false;
+  if (!isAdmin) {
+    return {
+      ok: false,
+      status: 403,
+      message: "Only admins can modify the itinerary.",
+    };
   }
 
   return { ok: true, trip };
@@ -60,7 +85,7 @@ const addItineraryItem = async (req, res) => {
       return res.status(400).json({ message: "location_name is required" });
     }
 
-    if (!isValidCoordinates(coordinates)) {
+    if (coordinates && !isValidCoordinates(coordinates)) {
       return res
         .status(400)
         .json({ message: "coordinates must be [lng, lat] numbers" });
@@ -75,9 +100,9 @@ const addItineraryItem = async (req, res) => {
       return res.status(400).json({ message: "scheduled_time is invalid" });
     }
 
-    const membership = await ensureTripExistsAndMember({ tripId, userId });
-    if (!membership.ok) {
-      return res.status(membership.status).json({ message: membership.message });
+    const adminAccess = await ensureTripAdminCanModify({ tripId, userId });
+    if (!adminAccess.ok) {
+      return res.status(adminAccess.status).json({ message: adminAccess.message });
     }
 
     const item = await ItineraryItem.create({
@@ -85,7 +110,7 @@ const addItineraryItem = async (req, res) => {
       location_name: location_name.trim(),
       location: {
         type: "Point",
-        coordinates,
+        coordinates: coordinates || [0, 0],
       },
       estimated_cost:
         typeof estimated_cost === "number" && Number.isFinite(estimated_cost)
@@ -95,6 +120,19 @@ const addItineraryItem = async (req, res) => {
         typeof priority_score === "number" ? priority_score : undefined,
       scheduled_time: parsedDate,
     });
+
+    const io = req.app.get("io");
+    if (io) {
+      const activity = await Activity.create({
+        tripId,
+        userId,
+        text: `${req.user.username} manually added an itinerary stop.`,
+        type: "system",
+      });
+      await activity.populate("userId", "username profilePic");
+      io.to(tripId.toString()).emit("itinerary_updated");
+      io.to(tripId.toString()).emit("receive_message", activity);
+    }
 
     return res.status(201).json({ item });
   } catch (error) {
@@ -163,13 +201,12 @@ const updateItineraryItem = async (req, res) => {
       return res.status(404).json({ message: "Itinerary item not found" });
     }
 
-    // Security: prevent non-members from updating items via guessed IDs
-    const membership = await ensureTripExistsAndMember({
+    const adminAccess = await ensureTripAdminCanModify({
       tripId: existing.tripId,
       userId,
     });
-    if (!membership.ok) {
-      return res.status(membership.status).json({ message: membership.message });
+    if (!adminAccess.ok) {
+      return res.status(adminAccess.status).json({ message: adminAccess.message });
     }
 
     const updates = { ...req.body };
@@ -201,6 +238,20 @@ const updateItineraryItem = async (req, res) => {
       runValidators: true,
     });
 
+    const io = req.app.get("io");
+    if (io) {
+      const tripId = existing.tripId.toString();
+      const activity = await Activity.create({
+        tripId,
+        userId,
+        text: `${req.user.username} manually updated the itinerary.`,
+        type: "system",
+      });
+      await activity.populate("userId", "username profilePic");
+      io.to(tripId).emit("itinerary_updated");
+      io.to(tripId).emit("receive_message", activity);
+    }
+
     return res.status(200).json({ item: updated });
   } catch (error) {
     console.error("Update itinerary item error:", error);
@@ -226,16 +277,30 @@ const deleteItineraryItem = async (req, res) => {
       return res.status(404).json({ message: "Itinerary item not found" });
     }
 
-    // Security: prevent non-members from deleting items via guessed IDs
-    const membership = await ensureTripExistsAndMember({
+    const adminAccess = await ensureTripAdminCanModify({
       tripId: existing.tripId,
       userId,
     });
-    if (!membership.ok) {
-      return res.status(membership.status).json({ message: membership.message });
+    if (!adminAccess.ok) {
+      return res.status(adminAccess.status).json({ message: adminAccess.message });
     }
 
     await ItineraryItem.findByIdAndDelete(itemId);
+
+    const io = req.app.get("io");
+    if (io) {
+      const tripId = existing.tripId.toString();
+      const activity = await Activity.create({
+        tripId,
+        userId,
+        text: `${req.user.username} manually updated the itinerary.`,
+        type: "system",
+      });
+      await activity.populate("userId", "username profilePic");
+      io.to(tripId).emit("itinerary_updated");
+      io.to(tripId).emit("receive_message", activity);
+    }
+
     return res.status(200).json({ message: "Itinerary item deleted successfully" });
   } catch (error) {
     console.error("Delete itinerary item error:", error);
@@ -267,6 +332,11 @@ const toggleVisitedStatus = async (req, res) => {
     });
     if (!membership.ok) {
       return res.status(membership.status).json({ message: membership.message });
+    }
+    if (membership.trip.status === "ended") {
+      return res.status(403).json({
+        message: "This trip has ended. No further transactions are allowed.",
+      });
     }
 
     item.visited = !item.visited;

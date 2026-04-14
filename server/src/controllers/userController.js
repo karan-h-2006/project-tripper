@@ -43,7 +43,13 @@ const joinTrip = async (req, res) => {
 
     const populatedTrip = await Trip.findById(trip._id)
       .populate("admin", "-password")
-      .populate("members", "-password");
+      .populate("members", "username profilePic")
+      .populate("admins", "username profilePic");
+
+    const io = req.app.get("io");
+    if (io) {
+      io.to(trip._id.toString()).emit("trip_members_updated");
+    }
 
     return res.status(200).json({
       message: "Joined trip successfully",

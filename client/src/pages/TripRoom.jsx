@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { io } from 'socket.io-client';
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { ArrowLeft, IndianRupee, KeyRound, MapPinned, QrCode } from "lucide-react";
@@ -9,76 +9,119 @@ import ActivityFeed from "../components/ActivityFeed.jsx";
 import ItineraryPanel from "../components/ItineraryPanel.jsx";
 import UpiScannerModal from "../components/UpiScannerModal.jsx";
 import LedgerPanel from "../components/LedgerPanel.jsx";
+import MembersPanel from "../components/MembersPanel.jsx";
 
 const TripRoom = () => {
   const { id } = useParams();
+  const tripId = id;
   const navigate = useNavigate();
   const location = useLocation();
   const { user } = useAuth();
+  const currentUserId = user?._id || "";
   const [trip, setTrip] = useState(location.state?.trip || null);
   const [loading, setLoading] = useState(!location.state?.trip);
   const [upiModalOpen, setUpiModalOpen] = useState(false);
   const [socket, setSocket] = useState(null);
 
-  useEffect(() => {
-    if (trip || !id) return;
-
-    const fetchTrip = async () => {
+  const fetchTripData = useCallback(
+    async ({ suppressRedirect = false } = {}) => {
+      if (!id) return;
       try {
-        // Assumes a GET /api/trips/:id endpoint that returns the trip.
-        // Adjust the path / response shape to match your backend.
         const res = await api.get(`/trips/${id}`);
         setTrip(res.data?.trip || res.data);
       } catch (error) {
-        const message =
-          error.response?.data?.message ||
-          "Failed to load trip. Returning to dashboard.";
-        toast.error(message);
-        navigate("/dashboard", { replace: true });
+        if (!suppressRedirect) {
+          const message =
+            error.response?.data?.message ||
+            "Failed to load trip. Returning to dashboard.";
+          toast.error(message);
+          navigate("/dashboard", { replace: true });
+        }
       } finally {
-        setLoading(false);
+        if (!suppressRedirect) {
+          setLoading(false);
+        }
       }
-    };
+    },
+    [id, navigate]
+  );
 
-    fetchTrip();
-  }, [id, trip, navigate]);
+  useEffect(() => {
+    if (trip || !id) return;
+    fetchTripData();
+  }, [id, trip, fetchTripData]);
 
   const handleRecorded = () => {
     // In future we can refetch balances or ledger here.
   };
 
   useEffect(() => {
-    // Grab the token from localStorage (or your AuthContext)
-    const token = localStorage.getItem('tripper_token'); // Adjust this if you store it differently!
-
-    // Pass the token in the auth object
-    const socket = io('http://localhost:5000', {
-      auth: {
-        token: token
-      }
+    const token = localStorage.getItem("tripper_token");
+    const socketClient = io("http://localhost:5000", {
+      auth: { token },
     });
-    setSocket(socket);
+    setSocket(socketClient);
 
     if (id) {
-      socket.emit('join_trip_room', id);
+      socketClient.emit("join_trip_room", id);
     }
 
-    socket.on('budget_updated', (data) => {
+    socketClient.on("budget_updated", (data) => {
+      if (data?.message) {
         toast.success(data.message);
-        // fetchTripData(); 
+      }
     });
 
-    // Catch authentication errors sent by the backend
-    socket.on('connect_error', (err) => {
-      console.error('Socket connection failed:', err.message);
-      toast.error('Real-time connection failed. Please log in again.');
+    socketClient.on("connect_error", (err) => {
+      console.error("Socket connection failed:", err.message);
+      toast.error("Real-time connection failed. Please log in again.");
     });
 
     return () => {
       setSocket(null);
-      socket.disconnect();
+      socketClient.disconnect();
     };
   }, [id]);
+
+  useEffect(() => {
+    if (!socket || !tripId) return;
+
+    const refreshTripData = () => {
+      fetchTripData({ suppressRedirect: true });
+    };
+
+    socket.on("budget_updated", refreshTripData);
+    socket.on("trip_members_updated", refreshTripData);
+    socket.on("trip_ended", refreshTripData);
+    socket.on("user_kicked", (payload) => {
+      const kickedId = String(payload?.userId);
+      let activeUserId = String(currentUserId);
+
+      try {
+        const localUser = JSON.parse(localStorage.getItem("user"));
+        if (localUser && localUser._id) {
+          activeUserId = String(localUser._id);
+        }
+      } catch (e) {
+        // Ignore malformed local storage fallback values.
+      }
+
+      console.log(`[Socket] Kick event received for: ${kickedId}. My ID is: ${activeUserId}`);
+
+      if (kickedId === activeUserId) {
+        toast.error("You have been removed from the trip by an Admin.");
+        socket.emit("leave_room", tripId);
+        navigate("/dashboard");
+      }
+    });
+
+    return () => {
+      socket.off("budget_updated", refreshTripData);
+      socket.off("trip_members_updated", refreshTripData);
+      socket.off("trip_ended", refreshTripData);
+      socket.off("user_kicked");
+    };
+  }, [socket, tripId, currentUserId, navigate, fetchTripData]);
 
  
   if (loading) {
@@ -95,6 +138,8 @@ const TripRoom = () => {
   if (!trip) {
     return null;
   }
+
+  const isTripEnded = trip.status === "ended";
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -124,8 +169,20 @@ const TripRoom = () => {
       </header>
 
       <main className="max-w-7xl mx-auto px-4 py-6 grid grid-cols-1 lg:grid-cols-12 gap-5">
+        {isTripEnded && (
+          <div className="lg:col-span-12 bg-red-100 text-red-800 p-3 text-center font-bold rounded-xl border border-red-200">
+            This trip has ended. The ledger is locked and balances are final.
+          </div>
+        )}
+
         <section className="lg:col-span-4">
-          <ItineraryPanel tripId={id} socket={socket} />
+          <ItineraryPanel
+            tripId={id}
+            socket={socket}
+            isTripEnded={isTripEnded}
+            tripData={trip}
+            currentUserId={currentUserId}
+          />
         </section>
 
         <div className="lg:col-span-5 space-y-5 min-h-0">
@@ -160,15 +217,23 @@ const TripRoom = () => {
             </div>
           </div>
 
-          <button
-            type="button"
-            onClick={() => setUpiModalOpen(true)}
-            className="inline-flex items-center justify-center gap-2 rounded-xl bg-indigo-600 px-4 py-2 text-sm font-medium text-white shadow-md hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-          >
-            <QrCode className="w-4 h-4" />
-            Record UPI expense
-          </button>
+          {!isTripEnded && (
+            <button
+              type="button"
+              onClick={() => setUpiModalOpen(true)}
+              className="inline-flex items-center justify-center gap-2 rounded-xl bg-indigo-600 px-4 py-2 text-sm font-medium text-white shadow-md hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            >
+              <QrCode className="w-4 h-4" />
+              Scan & Pay
+            </button>
+          )}
         </section>
+
+        <MembersPanel
+          tripData={trip}
+          currentUserId={currentUserId}
+          onMembersChanged={fetchTripData}
+        />
 
         <LedgerPanel tripId={id} socket={socket} />
         </div>
@@ -177,7 +242,7 @@ const TripRoom = () => {
           <ActivityFeed
             tripId={id}
             socket={socket}
-            currentUserId={user?._id || ""}
+            currentUserId={currentUserId}
           />
         </section>
       </main>
@@ -187,6 +252,7 @@ const TripRoom = () => {
         onClose={() => setUpiModalOpen(false)}
         tripId={trip._id}
         onRecorded={handleRecorded}
+        isTripEnded={isTripEnded}
       />
     </div>
   );

@@ -1,5 +1,6 @@
 const { recordExpense } = require("../services/ledgerService");
 const Activity = require("../models/Activity");
+const Trip = require("../models/Trip");
 
 const recordUpiPayment = async (req, res) => {
   try {
@@ -37,6 +38,17 @@ const recordUpiPayment = async (req, res) => {
     const description = `UPI payment to ${merchantName} (${merchantUpiId}), UTR: ${utrReference}`;
 
     const io = req.app.get("io");
+    const trip = await Trip.findById(tripId).select("status");
+
+    if (!trip) {
+      return res.status(404).json({ message: "Trip not found" });
+    }
+
+    if (trip.status === "ended") {
+      return res.status(403).json({
+        message: "This trip has ended. No further transactions are allowed.",
+      });
+    }
 
     const { expense, balances } = await recordExpense({
       tripId,
