@@ -2,6 +2,7 @@ const crypto = require("crypto");
 const Trip = require("../models/Trip");
 const User = require("../models/User");
 const Activity = require("../models/Activity");
+const { runBudgetOptimizer } = require("../services/budgetOptimizer");
 
 const getNormalizedUserId = (userLike) => {
   if (!userLike) return "";
@@ -292,6 +293,7 @@ const updateTripBudget = async (req, res) => {
       io.to(roomString).emit("receive_message", activity);
     }
 
+    await runBudgetOptimizer(tripId, req.app.get("io"));
     return res.status(200).json({ trip });
   } catch (error) {
     console.error("Update trip budget error:", error);

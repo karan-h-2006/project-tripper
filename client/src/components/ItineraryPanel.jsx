@@ -226,7 +226,9 @@ const ItineraryPanel = ({ tripId, socket, isTripEnded = false, tripData, current
 
               <div
                 className={`rounded-xl border p-3 transition ${
-                  item.visited
+                  item.isSkipped
+                    ? "border-red-200 bg-red-50/50 opacity-40 grayscale"
+                    : item.visited
                     ? "border-gray-200 bg-gray-100/70 opacity-70"
                     : "border-gray-100 bg-gray-50/60"
                 }`}
@@ -237,8 +239,8 @@ const ItineraryPanel = ({ tripId, socket, isTripEnded = false, tripData, current
                     type="checkbox"
                     checked={Boolean(item.visited)}
                     onChange={() => handleToggle(item._id)}
-                    disabled={isTripLocked}
-                    className="mt-0.5 h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+                    disabled={isTripLocked || item.isSkipped}
+                    className="mt-0.5 h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500 disabled:opacity-50"
                   />
                   <p
                     className={`text-sm font-medium ${
@@ -248,7 +250,7 @@ const ItineraryPanel = ({ tripId, socket, isTripEnded = false, tripData, current
                     {item.location_name}
                   </p>
                   </div>
-                  {isCurrentUserAdmin && !isTripLocked && (
+                  {isCurrentUserAdmin && !isTripLocked && !item.isSkipped && (
                     <div className="flex items-center gap-1">
                       <button
                         type="button"
