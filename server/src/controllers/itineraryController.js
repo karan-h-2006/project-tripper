@@ -3,7 +3,7 @@ const Trip = require("../models/Trip");
 const ItineraryItem = require("../models/ItineraryItem");
 const Expense = require("../models/Expense");
 const Activity = require("../models/Activity");
-const { optimizeItinerary } = require("../services/aiService");
+const { runBudgetOptimizer } = require("../services/budgetOptimizer");
 
 const getUserIdFromReq = (req) => (req.user && (req.user.id || req.user._id)) || null;
 
@@ -172,7 +172,7 @@ const getItinerary = async (req, res) => {
     const totalSpent = Number(expenseTotals[0]?.totalSpent || 0);
     const remainingBudget = totalBudget - totalSpent;
     const unvisitedCost = items.reduce(
-      (sum, item) => (item.visited ? sum : sum + Number(item.estimated_cost || 0)),
+      (sum, item) => (item.visited || item.isSkipped ? sum : sum + Number(item.estimated_cost || 0)),
       0
     );
 
@@ -366,7 +366,7 @@ const toggleVisitedStatus = async (req, res) => {
       );
 
       if (remainingItineraryCost > remainingBudget) {
-        await optimizeItinerary(item.tripId, io);
+        await runBudgetOptimizer(item.tripId, io);
       }
     }
 

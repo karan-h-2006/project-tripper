@@ -41,6 +41,10 @@ const itineraryItemSchema = new mongoose.Schema(
       type: Boolean,
       default: false,
     },
+    isSkipped: {
+      type: Boolean,
+      default: false,
+    },
     // Optional: carried over from legacy embedded itinerary rows (day / activity labels)
     day: {
       type: Number,
