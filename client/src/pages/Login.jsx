@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { LogIn, Plane } from "lucide-react";
+import GoogleAuthButton from "../components/GoogleAuthButton.jsx";
 import { useAuth } from "../context/useAuth.js";
 
 const Login = () => {
@@ -106,6 +107,16 @@ const Login = () => {
               {submitting ? "Signing in..." : "Sign in"}
             </button>
           </form>
+
+          <div className="my-5 flex items-center gap-3">
+            <div className="h-px flex-1 bg-gray-200" />
+            <span className="text-xs font-medium uppercase tracking-[0.2em] text-gray-400">
+              or
+            </span>
+            <div className="h-px flex-1 bg-gray-200" />
+          </div>
+
+          <GoogleAuthButton />
 
           <p className="mt-4 text-center text-xs text-gray-500">
             Don&apos;t have an account?{" "}
