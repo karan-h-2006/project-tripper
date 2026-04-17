@@ -176,10 +176,30 @@ const UpiScannerModal = ({ open, onClose, tripId, onRecorded, isTripEnded = fals
           )}
           {scanStep === "scanning" && (
             <div className="space-y-3">
+              <style>{`
+                /* Force the main container to span full width */
+                #upi-qr-scanner {
+                  width: 100% !important;
+                  border: none !important;
+                }
+                
+                /* Force the injected video element to fill the container */
+                #upi-qr-scanner video {
+                  width: 100% !important;
+                  height: auto !important;
+                  object-fit: cover !important;
+                  border-radius: 0.5rem !important; /* Matches Tailwind rounded-lg */
+                }
+                
+                /* Hide the default ugly border html5-qrcode adds */
+                #upi-qr-scanner__dashboard_section_csr span {
+                  color: inherit !important;
+                }
+              `}</style>
               <div
                 id="upi-qr-scanner"
                 ref={scannerRef}
-                className="w-full rounded-xl border border-dashed border-gray-300 bg-gray-50 flex items-center justify-center min-h-[260px]"
+                className="w-full h-full overflow-hidden rounded-lg"
               >
                 <div className="flex flex-col items-center gap-2 text-center px-4">
                   <QrCode className="w-10 h-10 text-indigo-500" />
