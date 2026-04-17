@@ -85,6 +85,11 @@ export const AuthProvider = ({ children }) => {
     }
   }, [navigate]);
 
+  const updateUser = useCallback((nextUser) => {
+    setUser(nextUser);
+    localStorage.setItem(USER_KEY, JSON.stringify(nextUser));
+  }, []);
+
   const googleLogin = useCallback(async (idToken) => {
     try {
       const res = await api.post("/auth/google", { idToken });
@@ -120,10 +125,11 @@ export const AuthProvider = ({ children }) => {
       loading,
       login,
       register,
+      updateUser,
       googleLogin,
       logout,
     }),
-    [user, token, loading, login, register, googleLogin, logout]
+    [user, token, loading, login, register, updateUser, googleLogin, logout]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

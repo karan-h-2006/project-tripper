@@ -1,6 +1,7 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
+  Camera,
   LogOut,
   MapPin,
   PlusCircle,
@@ -12,12 +13,14 @@ import { useAuth } from "../context/useAuth.js";
 import api from "../api/axios";
 
 const Dashboard = () => {
-  const { user, logout } = useAuth();
+  const { user, logout, updateUser } = useAuth();
   const navigate = useNavigate();
+  const fileInputRef = useRef(null);
   const [trips, setTrips] = useState([]);
   const [loadingTrips, setLoadingTrips] = useState(true);
   const [creatingTrip, setCreatingTrip] = useState(false);
   const [joiningTrip, setJoiningTrip] = useState(false);
+  const [uploadingProfilePic, setUploadingProfilePic] = useState(false);
 
   const [createForm, setCreateForm] = useState({
     title: "",
@@ -116,18 +119,115 @@ const Dashboard = () => {
     navigate(`/trip/${trip._id}`, { state: { trip } });
   };
 
+  const getInitials = () => {
+    const baseName = user?.username || user?.email || "T";
+    return baseName.trim().charAt(0).toUpperCase();
+  };
+
+  const handleProfileImageClick = () => {
+    if (uploadingProfilePic) {
+      return;
+    }
+
+    fileInputRef.current?.click();
+  };
+
+  const handleProfileImageChange = async (e) => {
+    const file = e.target.files?.[0];
+
+    if (!file) {
+      return;
+    }
+
+    if (!file.type.startsWith("image/")) {
+      toast.error("Please choose an image file");
+      e.target.value = "";
+      return;
+    }
+
+    if (file.size > 1024 * 1024) {
+      toast.error("Please choose an image smaller than 1 MB");
+      e.target.value = "";
+      return;
+    }
+
+    const reader = new FileReader();
+
+    reader.onload = async () => {
+      setUploadingProfilePic(true);
+
+      try {
+        const res = await api.patch("/users/profile-picture", {
+          profilePic: reader.result,
+        });
+
+        if (res.data?.user) {
+          updateUser(res.data.user);
+        }
+
+        toast.success("Profile picture updated");
+      } catch (error) {
+        const message =
+          error.response?.data?.message ||
+          "Failed to update profile picture. Please try again.";
+        toast.error(message);
+      } finally {
+        setUploadingProfilePic(false);
+        e.target.value = "";
+      }
+    };
+
+    reader.onerror = () => {
+      toast.error("Could not read the image file");
+      e.target.value = "";
+    };
+
+    reader.readAsDataURL(file);
+  };
+
   return (
     <div className="min-h-screen bg-gray-50">
       <header className="border-b border-gray-100 bg-white">
         <div className="max-w-6xl mx-auto px-4 py-4 flex items-center justify-between gap-4">
           <div className="flex items-center gap-3">
-            <div className="inline-flex items-center justify-center w-9 h-9 rounded-2xl bg-indigo-600 text-white shadow-sm">
-              <QrCode className="w-5 h-5" />
+            <div className="relative">
+              <button
+                type="button"
+                onClick={handleProfileImageClick}
+                className="relative inline-flex h-11 w-11 items-center justify-center overflow-hidden rounded-full border border-indigo-100 bg-indigo-600 text-sm font-semibold text-white shadow-sm transition hover:scale-[1.02] hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-70"
+                disabled={uploadingProfilePic}
+                title="Upload profile picture"
+              >
+                {user?.profilePic ? (
+                  <img
+                    src={user.profilePic}
+                    alt={`${user?.username || "User"} profile`}
+                    className="h-full w-full object-cover"
+                  />
+                ) : (
+                  <span>{getInitials()}</span>
+                )}
+              </button>
+              <span className="pointer-events-none absolute -bottom-1 -right-1 inline-flex h-5 w-5 items-center justify-center rounded-full border border-white bg-gray-900 text-white shadow-sm">
+                <Camera className="h-3 w-3" />
+              </span>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/png,image/jpeg,image/jpg,image/webp,image/gif"
+                className="hidden"
+                onChange={handleProfileImageChange}
+              />
             </div>
             <div>
               <p className="text-sm font-semibold text-gray-900">Tripper</p>
               <p className="text-xs text-gray-500">
                 Hi, {user?.username || user?.email}
+              </p>
+              <p className="text-[11px] text-gray-400">
+                {uploadingProfilePic
+                  ? "Uploading photo..."
+                  : "Click the avatar to add a photo"}
               </p>
             </div>
           </div>
