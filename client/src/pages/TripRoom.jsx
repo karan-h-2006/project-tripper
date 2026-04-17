@@ -22,6 +22,7 @@ const TripRoom = () => {
   const [loading, setLoading] = useState(!location.state?.trip);
   const [upiModalOpen, setUpiModalOpen] = useState(false);
   const [socket, setSocket] = useState(null);
+  const [ledgerRefresh, setLedgerRefresh] = useState(0);
 
   const fetchTripData = useCallback(
     async ({ suppressRedirect = false } = {}) => {
@@ -52,7 +53,7 @@ const TripRoom = () => {
   }, [id, trip, fetchTripData]);
 
   const handleRecorded = () => {
-    // In future we can refetch balances or ledger here.
+    setLedgerRefresh((prev) => prev + 1);
   };
 
   useEffect(() => {
@@ -235,7 +236,7 @@ const TripRoom = () => {
           onMembersChanged={fetchTripData}
         />
 
-        <LedgerPanel tripId={id} socket={socket} />
+        <LedgerPanel tripId={id} socket={socket} refreshTrigger={ledgerRefresh} />
         </div>
 
         <section className="lg:col-span-3 min-h-0">

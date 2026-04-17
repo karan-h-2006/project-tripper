@@ -30,7 +30,7 @@ const formatDateTime = (value) => {
   });
 };
 
-const LedgerPanel = ({ tripId, socket }) => {
+const LedgerPanel = ({ tripId, socket, refreshTrigger }) => {
   const { user } = useAuth();
   const [ledgerData, setLedgerData] = useState({
     totalBudget: 0,
@@ -56,7 +56,7 @@ const LedgerPanel = ({ tripId, socket }) => {
 
   useEffect(() => {
     fetchLedger();
-  }, [fetchLedger]);
+  }, [fetchLedger, refreshTrigger]);
 
   useEffect(() => {
     if (!socket) return;
@@ -265,6 +265,7 @@ LedgerPanel.propTypes = {
     on: PropTypes.func,
     off: PropTypes.func,
   }),
+  refreshTrigger: PropTypes.number,
 };
 
 LedgerPanel.defaultProps = {
