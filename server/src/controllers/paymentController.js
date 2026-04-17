@@ -1,6 +1,7 @@
 const { recordExpense } = require("../services/ledgerService");
 const Activity = require("../models/Activity");
 const Trip = require("../models/Trip");
+const { runBudgetOptimizer } = require("../services/budgetOptimizer");
 
 const recordUpiPayment = async (req, res) => {
   try {
@@ -75,6 +76,7 @@ const recordUpiPayment = async (req, res) => {
       amountAdded: amount,
     });
 
+    await runBudgetOptimizer(tripId, req.app.get("io"));
     return res.status(200).json({
       status: "success",
       message: "UPI payment recorded in immutable ledger",

@@ -1,6 +1,7 @@
 const { recordExpense } = require("../services/ledgerService");
 const Activity = require("../models/Activity");
 const Trip = require("../models/Trip");
+const { runBudgetOptimizer } = require("../services/budgetOptimizer");
 
 const createExpense = async (req, res) => {
   try {
@@ -58,6 +59,7 @@ const createExpense = async (req, res) => {
       });
     }
 
+    await runBudgetOptimizer(tripId, req.app.get("io"));
     return res.status(201).json(result);
   } catch (error) {
     console.error("Create expense error:", error);

@@ -10,7 +10,7 @@ const runBudgetOptimizer = async (tripId, io) => {
     const socketServer = io || arguments[1];
     const roomString = tripId.toString();
 
-    // Fetch the Trip to get totalBudget (cast to Number())
+    // 1. Calculate Remaining Budget safely
     const trip = await Trip.findById(tripId).select("total_budget");
     if (!trip) {
       console.error(
@@ -19,7 +19,6 @@ const runBudgetOptimizer = async (tripId, io) => {
       return;
     }
 
-    // Fetch all expenses for the trip to calculate remainingBudget
     const expenseTotals = await Expense.aggregate([
       { $match: { tripId: trip._id } },
       { $group: { _id: "$tripId", totalSpent: { $sum: "$amount" } } },
@@ -29,58 +28,63 @@ const runBudgetOptimizer = async (tripId, io) => {
     const totalBudget = Number(trip.total_budget || 0);
     const remainingBudget = totalBudget - totalSpent;
 
-    // Fetch ALL ItineraryItems for this trip where visited: false
+    // 2. Fetch Unvisited Items
     const items = await ItineraryItem.find({ tripId, visited: false });
 
-    // Reset State: Set item.isSkipped = false on ALL fetched items
-    let totalUnvisitedCost = 0;
-    for (let item of items) {
-      item.isSkipped = false;
-      totalUnvisitedCost += Number(item.estimated_cost || 0);
-    }
+    // 3. Calculate Total Initial Cost
+    let currentCost = 0;
+    items.forEach(item => { currentCost += Number(item.estimated_cost || 0); });
 
-    if (items.length === 0) {
-      return;
-    }
-
-    // Sort the items array by estimated_cost DESCENDING (most expensive first)
+    // 4. Sort descending (most expensive first)
     items.sort((a, b) => Number(b.estimated_cost || 0) - Number(a.estimated_cost || 0));
 
-    const skippedNames = [];
-    let currentCost = totalUnvisitedCost;
+    // 5. The State-Aware Loop
+    const newlySkipped = [];
+    const newlyRestored = [];
 
-    // The Deterministic While Loop
     for (let item of items) {
-      if (currentCost <= remainingBudget) break;
+      const previouslySkipped = item.isSkipped;
+      let currentlySkipped = false;
       
-      item.isSkipped = true;
-      currentCost -= Number(item.estimated_cost || 0);
-      skippedNames.push(item.location_name);
+      // If the running cost exceeds our budget, we must skip this item
+      if (currentCost > remainingBudget) {
+        currentlySkipped = true;
+        currentCost -= Number(item.estimated_cost || 0); // Remove its cost from the running total
+      }
+      
+      // Track exact state changes for the Activity feed
+      if (previouslySkipped === false && currentlySkipped === true) {
+        newlySkipped.push(item.location_name);
+      } else if (previouslySkipped === true && currentlySkipped === false) {
+        newlyRestored.push(item.location_name);
+      }
+      
+      // Apply the new state
+      item.isSkipped = currentlySkipped;
     }
 
-    // Save to DB: FORCE the database to commit the flags before moving on
+    // 6. Save DB and Emit
     await Promise.all(items.map((item) => item.save()));
 
-    // The Broadcast
     if (socketServer) {
-        let text = "";
-        if (skippedNames.length > 0) {
-            text = `⚙️ Budget Optimizer: Removed ${skippedNames.join(', ')} from the timeline to stay under the ₹${remainingBudget} remaining budget.`;
-        } else if (totalUnvisitedCost <= remainingBudget) {
-            text = `✅ Budget Optimizer: We can afford the rest of the itinerary!`;
-        }
-
-        if (text !== "") {
-            const activity = await Activity.create({
-                tripId,
-                text,
-                type: "system",
-            });
-            socketServer.to(roomString).emit("itinerary_updated");
-            socketServer.to(roomString).emit("receive_message", activity);
-        } else {
-             socketServer.to(roomString).emit("itinerary_updated");
-        }
+      socketServer.to(roomString).emit("itinerary_updated");
+      
+      // ONLY emit if state actually changed
+      if (newlySkipped.length > 0) {
+        const act = await Activity.create({ 
+          tripId, 
+          text: `⚙️ Budget Optimizer: Removed ${newlySkipped.join(', ')} from the timeline to stay under the ₹${remainingBudget} remaining budget.`, 
+          type: "system" 
+        });
+        socketServer.to(roomString).emit("receive_message", act);
+      } else if (newlyRestored.length > 0) {
+        const act = await Activity.create({ 
+          tripId, 
+          text: `✅ Budget Optimizer: Budget recovered! Restored ${newlyRestored.join(', ')} to the timeline.`, 
+          type: "system" 
+        });
+        socketServer.to(roomString).emit("receive_message", act);
+      }
     }
 
     console.log(`[Budget Optimizer] Successfully optimized budget for trip ${tripId}`);
