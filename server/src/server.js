@@ -41,7 +41,8 @@ app.use(
     credentials: true,
   })
 );
-app.use(express.json());
+app.use(express.json({ limit: "2mb" }));
+app.use(express.urlencoded({ extended: true, limit: "2mb" }));
 
 app.use("/api/auth", authRoutes);
 app.use("/api/payments", paymentRoutes);
@@ -54,6 +55,16 @@ app.use("/api/ledger", ledgerRoutes);
 
 app.get("/", (req, res) => {
   res.json({ message: "API is running..." });
+});
+
+app.use((error, req, res, next) => {
+  if (error?.type === "entity.too.large") {
+    return res.status(413).json({
+      message: "Image is too large. Please choose a smaller file.",
+    });
+  }
+
+  return next(error);
 });
 
 io.use((socket, next) => {

@@ -85,6 +85,32 @@ export const AuthProvider = ({ children }) => {
     }
   }, [navigate]);
 
+  const updateUser = useCallback((nextUser) => {
+    setUser(nextUser);
+    localStorage.setItem(USER_KEY, JSON.stringify(nextUser));
+  }, []);
+
+  const googleLogin = useCallback(async (idToken) => {
+    try {
+      const res = await api.post("/auth/google", { idToken });
+      const { token: jwt, user: userData } = res.data || {};
+
+      if (!jwt || !userData) {
+        throw new Error("Invalid Google login response from server");
+      }
+
+      persistAuth(jwt, userData);
+      toast.success("Signed in with Google");
+      navigate("/dashboard", { replace: true });
+    } catch (error) {
+      const message =
+        error.response?.data?.message ||
+        "Google sign-in failed. Please try again.";
+      toast.error(message);
+      throw error;
+    }
+  }, [navigate]);
+
   const logout = useCallback(() => {
     clearAuth();
     toast.success("Logged out");
@@ -99,9 +125,11 @@ export const AuthProvider = ({ children }) => {
       loading,
       login,
       register,
+      updateUser,
+      googleLogin,
       logout,
     }),
-    [user, token, loading, login, register, logout]
+    [user, token, loading, login, register, updateUser, googleLogin, logout]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

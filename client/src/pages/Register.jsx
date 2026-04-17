@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { PlaneTakeoff, UserPlus } from "lucide-react";
+import GoogleAuthButton from "../components/GoogleAuthButton.jsx";
 import { useAuth } from "../context/useAuth.js";
 
 const Register = () => {
@@ -171,6 +172,16 @@ const Register = () => {
               {submitting ? "Creating account..." : "Create account"}
             </button>
           </form>
+
+          <div className="my-5 flex items-center gap-3">
+            <div className="h-px flex-1 bg-gray-200" />
+            <span className="text-xs font-medium uppercase tracking-[0.2em] text-gray-400">
+              or
+            </span>
+            <div className="h-px flex-1 bg-gray-200" />
+          </div>
+
+          <GoogleAuthButton />
 
           <p className="mt-4 text-center text-xs text-gray-500">
             Already have an account?{" "}
