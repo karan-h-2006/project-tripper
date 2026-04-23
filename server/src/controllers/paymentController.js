@@ -1,19 +1,13 @@
+const { getRequesterId, getRequesterName, isUuid, toLegacyTripStatus } = require("../lib/legacyCompat");
+const { createAndEmitActivity } = require("../services/activityFeedService");
 const { recordExpense } = require("../services/ledgerService");
-const Activity = require("../models/Activity");
-const Trip = require("../models/Trip");
 const { runBudgetOptimizer } = require("../services/budgetOptimizer");
+const { fetchTripSnapshot, getMembershipForUser } = require("../services/tripDataService");
 
 const recordUpiPayment = async (req, res) => {
   try {
-    const {
-      tripId,
-      merchantUpiId,
-      merchantName,
-      amount,
-      utrReference,
-    } = req.body;
-
-    const userId = req.user && req.user.id ? req.user.id : req.user?._id;
+    const { tripId, merchantUpiId, merchantName, amount, utrReference } = req.body;
+    const userId = getRequesterId(req);
 
     if (
       !merchantUpiId ||
@@ -23,34 +17,35 @@ const recordUpiPayment = async (req, res) => {
       !tripId ||
       !userId
     ) {
-      return res
-        .status(400)
-        .json({ message: "Missing required payment fields" });
+      return res.status(400).json({ message: "Missing required payment fields" });
+    }
+
+    if (!isUuid(userId) || !isUuid(tripId)) {
+      return res.status(400).json({ message: "Missing required payment fields" });
     }
 
     const numericAmount = Number(amount);
-
     if (!Number.isFinite(numericAmount) || numericAmount <= 0) {
-      return res
-        .status(400)
-        .json({ message: "Amount must be a positive number" });
+      return res.status(400).json({ message: "Amount must be a positive number" });
     }
 
-    const description = `UPI payment to ${merchantName} (${merchantUpiId}), UTR: ${utrReference}`;
-
     const io = req.app.get("io");
-    const trip = await Trip.findById(tripId).select("status");
-
-    if (!trip) {
+    const tripRow = await fetchTripSnapshot(tripId);
+    if (!tripRow) {
       return res.status(404).json({ message: "Trip not found" });
     }
 
-    if (trip.status === "ended") {
+    if (!getMembershipForUser(tripRow, userId)) {
+      return res.status(403).json({ message: "Forbidden" });
+    }
+
+    if (toLegacyTripStatus(tripRow.status) === "ended") {
       return res.status(403).json({
         message: "This trip has ended. No further transactions are allowed.",
       });
     }
 
+    const description = `UPI payment to ${merchantName} (${merchantUpiId}), UTR: ${utrReference}`;
     const { expense, balances } = await recordExpense({
       tripId,
       paidBy: userId,
@@ -60,23 +55,20 @@ const recordUpiPayment = async (req, res) => {
       io,
     });
 
-    const activity = await Activity.create({
+    await createAndEmitActivity({
+      io,
       tripId,
       userId,
-      text: `${req.user.username} paid ₹${numericAmount}`,
+      text: `${getRequesterName(req)} paid INR ${numericAmount}`,
       type: "system",
     });
 
-    await activity.populate("userId", "username profilePic");
-
-    const roomString = tripId.toString();
-    io.to(roomString).emit("receive_message", activity);
-    io.to(roomString).emit("budget_updated", {
-      message: `${req.user.username} just added an expense of ₹${amount}`,
-      amountAdded: amount,
+    io?.to(String(tripId)).emit("budget_updated", {
+      message: `${getRequesterName(req)} just added an expense of INR ${numericAmount}`,
+      amountAdded: numericAmount,
     });
 
-    await runBudgetOptimizer(tripId, req.app.get("io"));
+    await runBudgetOptimizer(tripId, io);
     return res.status(200).json({
       status: "success",
       message: "UPI payment recorded in immutable ledger",

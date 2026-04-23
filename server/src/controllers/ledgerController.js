@@ -1,6 +1,7 @@
+const { mapSupabaseError } = require("../lib/legacyCompat");
 const { getLedgerSummary } = require("../services/ledgerService");
-const Trip = require("../models/Trip");
 const { calculateBalances } = require("../services/splitwiseService");
+const { fetchTripSnapshot, mapTripMembersAsUsers } = require("../services/tripDataService");
 
 const getLedger = async (req, res) => {
   try {
@@ -11,32 +12,21 @@ const getLedger = async (req, res) => {
     }
 
     const ledger = await getLedgerSummary(tripId);
-    const trip = await Trip.findById(tripId).populate(
-      "members",
-      "username profilePic"
-    );
-
-    if (!trip) {
+    const tripRow = await fetchTripSnapshot(tripId);
+    if (!tripRow) {
       return res.status(404).json({ message: "Trip not found" });
     }
 
-    const {
-      totalBudget,
-      totalSpent,
-      remainingBudget,
-      transactions,
-      balances,
-    } = ledger;
     const { exactBalances } = await calculateBalances(tripId);
 
     return res.status(200).json({
-      totalBudget,
-      totalSpent,
-      remainingBudget,
-      transactions,
-      balances,
+      totalBudget: ledger.totalBudget,
+      totalSpent: ledger.totalSpent,
+      remainingBudget: ledger.remainingBudget,
+      transactions: ledger.transactions,
+      balances: ledger.balances,
       personToPersonBalances: exactBalances || [],
-      members: trip.members || [],
+      members: mapTripMembersAsUsers(tripRow, { compact: true }),
     });
   } catch (error) {
     if (error.message === "Trip not found") {
@@ -44,7 +34,8 @@ const getLedger = async (req, res) => {
     }
 
     console.error("Get ledger error:", error);
-    return res.status(500).json({ message: "Server error" });
+    const mapped = mapSupabaseError(error);
+    return res.status(mapped.status).json({ message: mapped.message });
   }
 };
 

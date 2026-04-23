@@ -1,13 +1,13 @@
+const { getRequesterId, getRequesterName, isUuid, toLegacyTripStatus } = require("../lib/legacyCompat");
+const { createAndEmitActivity } = require("../services/activityFeedService");
 const { recordExpense } = require("../services/ledgerService");
-const Activity = require("../models/Activity");
-const Trip = require("../models/Trip");
 const { runBudgetOptimizer } = require("../services/budgetOptimizer");
+const { fetchTripSnapshot, getMembershipForUser } = require("../services/tripDataService");
 
 const createExpense = async (req, res) => {
   try {
     const { tripId, amount, description, category } = req.body;
-
-    const userId = req.user && req.user.id ? req.user.id : req.user?._id;
+    const userId = getRequesterId(req);
 
     if (!tripId || typeof amount !== "number" || !description) {
       return res.status(400).json({
@@ -15,18 +15,22 @@ const createExpense = async (req, res) => {
       });
     }
 
-    if (!userId) {
+    if (!userId || !isUuid(userId)) {
       return res.status(401).json({ message: "Not authorized" });
     }
 
     const io = req.app.get("io");
-    const trip = await Trip.findById(tripId).select("status");
+    const tripRow = await fetchTripSnapshot(tripId);
 
-    if (!trip) {
+    if (!tripRow) {
       return res.status(404).json({ message: "Trip not found" });
     }
 
-    if (trip.status === "ended") {
+    if (!getMembershipForUser(tripRow, userId)) {
+      return res.status(403).json({ message: "Forbidden" });
+    }
+
+    if (toLegacyTripStatus(tripRow.status) === "ended") {
       return res.status(403).json({
         message: "This trip has ended. No further transactions are allowed.",
       });
@@ -41,25 +45,20 @@ const createExpense = async (req, res) => {
       io,
     });
 
-    const activity = await Activity.create({
+    await createAndEmitActivity({
+      io,
       tripId,
-      userId: req.user.id,
-      text: `${req.user.username} added an expense of ₹${amount} for ${description || "the trip"}`,
+      userId,
+      text: `${getRequesterName(req)} added an expense of INR ${amount} for ${description || "the trip"}`,
       type: "system",
     });
 
-    await activity.populate("userId", "username profilePic");
+    io?.to(String(tripId)).emit("budget_updated", {
+      message: "Expense added manually",
+      amountAdded: amount,
+    });
 
-    if (io) {
-      const roomString = tripId.toString();
-      io.to(roomString).emit("receive_message", activity);
-      io.to(roomString).emit("budget_updated", {
-        message: "Expense added manually",
-        amountAdded: amount,
-      });
-    }
-
-    await runBudgetOptimizer(tripId, req.app.get("io"));
+    await runBudgetOptimizer(tripId, io);
     return res.status(201).json(result);
   } catch (error) {
     console.error("Create expense error:", error);
@@ -70,4 +69,3 @@ const createExpense = async (req, res) => {
 module.exports = {
   createExpense,
 };
-

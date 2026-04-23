@@ -1,12 +1,25 @@
-const User = require("../models/User");
-const Trip = require("../models/Trip");
+const crypto = require("crypto");
+const { getSupabase } = require("../lib/supabase");
+const {
+  getRequesterId,
+  isUuid,
+  mapLegacyUser,
+  mapSupabaseError,
+} = require("../lib/legacyCompat");
+const {
+  fetchTripSnapshot,
+  fetchUserById,
+  findTripByJoinCode,
+  getMembershipForUser,
+  mapTripForRoom,
+} = require("../services/tripDataService");
 
 const updateProfilePicture = async (req, res) => {
   try {
     const { profilePic } = req.body;
-    const userId = req.user && (req.user.id || req.user._id);
+    const userId = getRequesterId(req);
 
-    if (!userId) {
+    if (!userId || !isUuid(userId)) {
       return res.status(401).json({ message: "Not authorized" });
     }
 
@@ -30,19 +43,25 @@ const updateProfilePicture = async (req, res) => {
       });
     }
 
-    const user = await User.findByIdAndUpdate(
-      userId,
-      { profilePic },
-      { new: true }
-    ).select("-password");
+    const { data: updatedRows, error } = await getSupabase()
+      .from("users")
+      .update({ avatar_url: profilePic })
+      .eq("id", userId)
+      .select("id, email, display_name, avatar_url, timezone, created_at, updated_at, deleted_at");
 
-    if (!user) {
+    if (error) {
+      const mapped = mapSupabaseError(error);
+      return res.status(mapped.status).json({ message: mapped.message });
+    }
+
+    const userRow = updatedRows[0] || (await fetchUserById(userId));
+    if (!userRow) {
       return res.status(404).json({ message: "User not found" });
     }
 
     return res.status(200).json({
       message: "Profile picture updated",
-      user,
+      user: mapLegacyUser(userRow, { compact: false }),
     });
   } catch (error) {
     console.error("Update profile picture error:", error);
@@ -53,56 +72,47 @@ const updateProfilePicture = async (req, res) => {
 const joinTrip = async (req, res) => {
   try {
     const { join_code } = req.body;
+    const userId = getRequesterId(req);
 
     if (!join_code) {
       return res.status(400).json({ message: "Join code is required" });
     }
 
-    const userId = req.user && (req.user.id || req.user._id);
-
-    if (!userId) {
+    if (!userId || !isUuid(userId)) {
       return res.status(401).json({ message: "Not authorized" });
     }
 
-    const trip = await Trip.findOne({ join_code: join_code.toUpperCase() });
-
-    if (!trip) {
+    const tripRow = await findTripByJoinCode(join_code);
+    if (!tripRow) {
       return res.status(404).json({ message: "Trip not found" });
     }
 
-    const isAlreadyMember = trip.members.some(
-      (memberId) => memberId.toString() === userId.toString()
-    );
-
-    if (isAlreadyMember) {
+    const membership = getMembershipForUser(tripRow, userId);
+    if (membership) {
       return res.status(400).json({ message: "User already in this trip" });
     }
 
-    trip.members.addToSet(userId);
+    const { error } = await getSupabase().from("trip_members").insert({
+      id: crypto.randomUUID(),
+      trip_id: tripRow.id,
+      user_id: userId,
+      role: "MEMBER",
+    });
 
-    const user = await User.findById(userId);
-
-    if (!user) {
-      return res.status(404).json({ message: "User not found" });
+    if (error) {
+      const mapped = mapSupabaseError(error);
+      return res.status(mapped.status).json({ message: mapped.message });
     }
 
-    user.trips.addToSet(trip._id);
-
-    await Promise.all([trip.save(), user.save()]);
-
-    const populatedTrip = await Trip.findById(trip._id)
-      .populate("admin", "-password")
-      .populate("members", "username profilePic")
-      .populate("admins", "username profilePic");
-
+    const updatedTrip = await fetchTripSnapshot(tripRow.id);
     const io = req.app.get("io");
     if (io) {
-      io.to(trip._id.toString()).emit("trip_members_updated");
+      io.to(String(tripRow.id)).emit("trip_members_updated");
     }
 
     return res.status(200).json({
       message: "Joined trip successfully",
-      trip: populatedTrip || trip,
+      trip: mapTripForRoom(updatedTrip),
     });
   } catch (error) {
     console.error("Join trip error:", error);
@@ -114,4 +124,3 @@ module.exports = {
   joinTrip,
   updateProfilePicture,
 };
-

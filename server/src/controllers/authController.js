@@ -1,21 +1,25 @@
 const bcrypt = require("bcryptjs");
+const crypto = require("crypto");
 const jwt = require("jsonwebtoken");
 const { OAuth2Client } = require("google-auth-library");
-const User = require("../models/User");
+const { getSupabase } = require("../lib/supabase");
+const {
+  USER_SELECT,
+  mapLegacyUser,
+  mapSupabaseError,
+  parseUserMeta,
+  serializeUserMeta,
+} = require("../lib/legacyCompat");
+const { fetchUserByEmail } = require("../services/tripDataService");
 
 const googleClient = new OAuth2Client();
 
-const generateToken = (userId) => {
-  return jwt.sign({ id: userId }, process.env.JWT_SECRET, {
+const generateToken = (userId) =>
+  jwt.sign({ id: userId }, process.env.JWT_SECRET, {
     expiresIn: "30d",
   });
-};
 
-const formatUserResponse = (user) => {
-  const userData = user.toObject();
-  delete userData.password;
-  return userData;
-};
+const formatUserResponse = (userRow) => mapLegacyUser(userRow, { compact: false });
 
 const getUsernameFromGooglePayload = (payload = {}) => {
   const name = payload.name?.trim();
@@ -30,9 +34,6 @@ const getUsernameFromGooglePayload = (payload = {}) => {
   return "Tripper User";
 };
 
-// @desc    Register new user
-// @route   POST /api/auth/register
-// @access  Public
 const register = async (req, res) => {
   try {
     const { username, email, password } = req.body;
@@ -41,25 +42,39 @@ const register = async (req, res) => {
       return res.status(400).json({ message: "Please provide all fields" });
     }
 
-    const existingUser = await User.findOne({ email });
+    const normalizedEmail = String(email).trim().toLowerCase();
+    const existingUser = await fetchUserByEmail(normalizedEmail);
     if (existingUser) {
       return res.status(400).json({ message: "Email already in use" });
     }
 
-    const salt = await bcrypt.genSalt(10);
-    const hashedPassword = await bcrypt.hash(password, salt);
+    const passwordHash = await bcrypt.hash(String(password), 10);
+    const { data: insertedRows, error } = await getSupabase()
+      .from("users")
+      .insert({
+        id: crypto.randomUUID(),
+        email: normalizedEmail,
+        display_name: String(username).trim(),
+        avatar_url: null,
+        password_hash: passwordHash,
+        google_id: null,
+        timezone: serializeUserMeta({
+          timezone: "UTC",
+          passwordHash: null,
+          googleId: null,
+        }),
+      })
+      .select(USER_SELECT);
 
-    const user = await User.create({
-      username,
-      email,
-      password: hashedPassword,
-    });
+    if (error) {
+      const mapped = mapSupabaseError(error, "Server error");
+      return res.status(mapped.status).json({ message: mapped.message });
+    }
 
-    const token = generateToken(user._id);
-
+    const userRow = insertedRows[0];
     return res.status(201).json({
-      user: formatUserResponse(user),
-      token,
+      user: formatUserResponse(userRow),
+      token: generateToken(userRow.id),
     });
   } catch (error) {
     console.error("Register error:", error);
@@ -67,9 +82,6 @@ const register = async (req, res) => {
   }
 };
 
-// @desc    Login user
-// @route   POST /api/auth/login
-// @access  Public
 const login = async (req, res) => {
   try {
     const { email, password } = req.body;
@@ -78,27 +90,27 @@ const login = async (req, res) => {
       return res.status(400).json({ message: "Please provide all fields" });
     }
 
-    const user = await User.findOne({ email });
-    if (!user) {
+    const userRow = await fetchUserByEmail(email);
+    if (!userRow) {
       return res.status(400).json({ message: "Invalid credentials" });
     }
 
-    if (!user.password) {
+    const userMeta = parseUserMeta(userRow.timezone);
+    const hashToCompare = userRow.password_hash || userMeta.passwordHash;
+    if (!hashToCompare) {
       return res.status(400).json({
         message: "This account uses Google sign-in. Continue with Google.",
       });
     }
 
-    const isMatch = await bcrypt.compare(password, user.password);
+    const isMatch = await bcrypt.compare(String(password), hashToCompare);
     if (!isMatch) {
       return res.status(400).json({ message: "Invalid credentials" });
     }
 
-    const token = generateToken(user._id);
-
     return res.status(200).json({
-      user: formatUserResponse(user),
-      token,
+      user: formatUserResponse(userRow),
+      token: generateToken(userRow.id),
     });
   } catch (error) {
     console.error("Login error:", error);
@@ -106,9 +118,6 @@ const login = async (req, res) => {
   }
 };
 
-// @desc    Login or register user with Google
-// @route   POST /api/auth/google
-// @access  Public
 const googleLogin = async (req, res) => {
   try {
     const { idToken } = req.body;
@@ -136,38 +145,63 @@ const googleLogin = async (req, res) => {
       });
     }
 
-    let user = await User.findOne({ email: payload.email.toLowerCase() });
+    const normalizedEmail = payload.email.toLowerCase();
+    let userRow = await fetchUserByEmail(normalizedEmail);
 
-    if (!user) {
-      user = await User.create({
-        username: getUsernameFromGooglePayload(payload),
-        email: payload.email.toLowerCase(),
-        googleId: payload.sub,
-        profilePic: payload.picture || null,
-      });
+    if (!userRow) {
+      const { data: insertedRows, error } = await getSupabase()
+        .from("users")
+        .insert({
+          id: crypto.randomUUID(),
+          email: normalizedEmail,
+          display_name: getUsernameFromGooglePayload(payload),
+          avatar_url: payload.picture || null,
+          password_hash: null,
+          google_id: payload.sub,
+          timezone: serializeUserMeta({
+            timezone: "UTC",
+            passwordHash: null,
+            googleId: null,
+          }),
+        })
+        .select(USER_SELECT);
+
+      if (error) {
+        const mapped = mapSupabaseError(error, "Google authentication failed");
+        return res.status(mapped.status).json({ message: mapped.message });
+      }
+
+      userRow = insertedRows[0];
     } else {
-      let shouldSave = false;
-
-      if (!user.googleId) {
-        user.googleId = payload.sub;
-        shouldSave = true;
+      const userMeta = parseUserMeta(userRow.timezone);
+      
+      const updatePayload = {};
+      if (!userRow.google_id && !userMeta.googleId) {
+        updatePayload.google_id = payload.sub;
+      }
+      if (!userRow.avatar_url && payload.picture) {
+        updatePayload.avatar_url = payload.picture;
       }
 
-      if (!user.profilePic && payload.picture) {
-        user.profilePic = payload.picture;
-        shouldSave = true;
-      }
+      if (Object.keys(updatePayload).length > 0) {
+        const { data: updatedRows, error } = await getSupabase()
+          .from("users")
+          .update(updatePayload)
+          .eq("id", userRow.id)
+          .select(USER_SELECT);
 
-      if (shouldSave) {
-        await user.save();
+        if (error) {
+          const mapped = mapSupabaseError(error, "Google authentication failed");
+          return res.status(mapped.status).json({ message: mapped.message });
+        }
+
+        userRow = updatedRows[0];
       }
     }
 
-    const token = generateToken(user._id);
-
     return res.status(200).json({
-      user: formatUserResponse(user),
-      token,
+      user: formatUserResponse(userRow),
+      token: generateToken(userRow.id),
     });
   } catch (error) {
     console.error("Google login error:", error);
@@ -180,4 +214,3 @@ module.exports = {
   login,
   googleLogin,
 };
-

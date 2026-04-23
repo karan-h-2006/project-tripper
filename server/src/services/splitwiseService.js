@@ -1,165 +1,143 @@
-const mongoose = require("mongoose");
-const Trip = require("../models/Trip");
-const Expense = require("../models/Expense");
+const { getSupabase } = require("../lib/supabase");
+const { EXPENSE_SELECT, parseAmount } = require("../lib/legacyCompat");
+const { fetchTripSnapshot, mapTripMembersAsUsers } = require("./tripDataService");
 
-/**
- * Calculate and persist simplified balances for a trip.
- * Also computes exact person-to-person balances without greedy minimization.
- *
- * @param {string|mongoose.Types.ObjectId} tripId - The trip identifier.
- * @param {Object} [newExpense] - Optional newly created expense to include in the calculation.
- * @returns {Promise<{ simplifiedBalances: Array, exactBalances: Array }>}
- */
-const calculateBalances = async (tripId, newExpense) => {
-  // Normalize tripId to a Mongoose ObjectId
-  const normalizedTripId =
-    typeof tripId === "string" ? new mongoose.Types.ObjectId(tripId) : tripId;
+const loadTripExpenses = async (tripId) => {
+  const { data, error } = await getSupabase()
+    .from("expenses")
+    .select(EXPENSE_SELECT)
+    .eq("trip_id", tripId)
+    .order("occurred_at", { ascending: true })
+    .order("created_at", { ascending: true });
 
-  // 1. Load the trip with members so we know who participates
-  const trip = await Trip.findById(normalizedTripId).populate("members", "_id");
+  if (error) {
+    throw error;
+  }
 
-  if (!trip) {
+  return data || [];
+};
+
+const calculateBalances = async (tripId) => {
+  const tripRow = await fetchTripSnapshot(tripId);
+  if (!tripRow) {
     throw new Error("Trip not found");
   }
 
-  // 2. Load all persisted expenses for this trip
-  const expenses = await Expense.find({ tripId: normalizedTripId });
-
-  // Optionally include the just-created expense if caller passes it
-  if (newExpense) {
-    expenses.push(newExpense);
-  }
-
-  // 3. Build exact person-to-person debt matrix and net map.
-  //    Convention:
-  //      net[user] > 0  => user should receive money overall
-  //      net[user] < 0  => user owes money overall
-  const memberIds = trip.members.map((m) => m._id.toString());
+  const members = mapTripMembersAsUsers(tripRow, { compact: true });
+  const memberIds = members.map((member) => String(member._id));
   const net = {};
-  memberIds.forEach((id) => {
-    net[id] = 0;
-  });
   const debtMatrix = {};
-  memberIds.forEach((debtorId) => {
-    debtMatrix[debtorId] = {};
+
+  memberIds.forEach((memberId) => {
+    net[memberId] = 0;
+    debtMatrix[memberId] = {};
   });
 
-  // We assume each expense is split equally among ALL trip members.
-  // If later you support per-expense participants/shares, adapt this loop.
+  const expenses = await loadTripExpenses(tripId);
   for (const expense of expenses) {
-    const payerId = expense.paidBy.toString();
+    const payerId = String(expense.paid_by);
+    const splits = Array.isArray(expense.expense_splits) ? expense.expense_splits : [];
 
-    // Guard: only consider expenses where the payer is part of the trip
-    if (!net.hasOwnProperty(payerId)) {
+    if (!memberIds.includes(payerId)) {
       continue;
     }
 
-    const share = Number(expense.amount || 0) / memberIds.length;
+    splits.forEach((split) => {
+      const splitUserId = String(split.user_id);
+      const shareAmount = parseAmount(split.share_amount);
 
-    // For each member:
-    //  - decrease their net by their fair share (they "consume" this amount)
-    //  - increase payer's net by that same share
-    for (const memberId of memberIds) {
-      net[memberId] -= share;
-      net[payerId] += share;
-
-      if (memberId !== payerId) {
-        debtMatrix[memberId][payerId] =
-          (debtMatrix[memberId][payerId] || 0) + share;
+      if (!memberIds.includes(splitUserId) || shareAmount <= 0) {
+        return;
       }
-    }
+
+      net[splitUserId] -= shareAmount;
+      net[payerId] += shareAmount;
+
+      if (splitUserId !== payerId) {
+        debtMatrix[splitUserId][payerId] =
+          parseAmount((debtMatrix[splitUserId][payerId] || 0) + shareAmount);
+      }
+    });
   }
 
-  // 4. Net the exact matrix (A->B minus B->A), keep only non-zero edges.
   const exactBalances = [];
   const processedPairs = new Set();
 
   for (const debtorId of memberIds) {
     for (const creditorId of memberIds) {
-      if (debtorId === creditorId) continue;
+      if (debtorId === creditorId) {
+        continue;
+      }
 
       const pairKey = [debtorId, creditorId].sort().join("|");
-      if (processedPairs.has(pairKey)) continue;
+      if (processedPairs.has(pairKey)) {
+        continue;
+      }
       processedPairs.add(pairKey);
 
-      const forward = Number((debtMatrix[debtorId]?.[creditorId] || 0).toFixed(2));
-      const reverse = Number((debtMatrix[creditorId]?.[debtorId] || 0).toFixed(2));
-      const netAmount = Number((forward - reverse).toFixed(2));
+      const forward = parseAmount(debtMatrix[debtorId]?.[creditorId] || 0);
+      const reverse = parseAmount(debtMatrix[creditorId]?.[debtorId] || 0);
+      const netAmount = parseAmount(forward - reverse);
 
       if (netAmount > 0.01) {
-        exactBalances.push({
-          from: new mongoose.Types.ObjectId(debtorId),
-          to: new mongoose.Types.ObjectId(creditorId),
-          amount: Number(netAmount.toFixed(2)),
-        });
+        exactBalances.push({ from: debtorId, to: creditorId, amount: netAmount });
       } else if (netAmount < -0.01) {
         exactBalances.push({
-          from: new mongoose.Types.ObjectId(creditorId),
-          to: new mongoose.Types.ObjectId(debtorId),
-          amount: Number(Math.abs(netAmount).toFixed(2)),
+          from: creditorId,
+          to: debtorId,
+          amount: parseAmount(Math.abs(netAmount)),
         });
       }
     }
   }
 
-  // 5. Convert net balances into a simplified set of directed debts.
-  //    - Collect creditors (net > 0) and debtors (net < 0).
-  //    - Greedily match largest debtor with largest creditor, paying off
-  //      as much as possible each step. This minimizes the number of edges
-  //      in the debt graph while preserving correctness.
   const creditors = [];
   const debtors = [];
 
   Object.entries(net).forEach(([userId, amount]) => {
-    const rounded = Number(amount.toFixed(2));
+    const rounded = parseAmount(amount);
     if (rounded > 0.01) {
       creditors.push({ userId, amount: rounded });
     } else if (rounded < -0.01) {
-      debtors.push({ userId, amount: -rounded }); // store as positive "owes" amount
+      debtors.push({ userId, amount: parseAmount(Math.abs(rounded)) });
     }
   });
 
-  // Sort so we always match the largest amounts first (helps keep graph small)
-  creditors.sort((a, b) => b.amount - a.amount);
-  debtors.sort((a, b) => b.amount - a.amount);
+  creditors.sort((left, right) => right.amount - left.amount);
+  debtors.sort((left, right) => right.amount - left.amount);
 
   const simplifiedBalances = [];
-  let i = 0;
-  let j = 0;
+  let debtorIndex = 0;
+  let creditorIndex = 0;
 
-  while (i < debtors.length && j < creditors.length) {
-    const debtor = debtors[i];
-    const creditor = creditors[j];
-
-    const amount = Math.min(debtor.amount, creditor.amount);
+  while (debtorIndex < debtors.length && creditorIndex < creditors.length) {
+    const debtor = debtors[debtorIndex];
+    const creditor = creditors[creditorIndex];
+    const amount = parseAmount(Math.min(debtor.amount, creditor.amount));
 
     if (amount > 0.01) {
       simplifiedBalances.push({
-        owes: new mongoose.Types.ObjectId(debtor.userId),
-        to: new mongoose.Types.ObjectId(creditor.userId),
-        amount: Number(amount.toFixed(2)),
+        owes: debtor.userId,
+        to: creditor.userId,
+        amount,
       });
     }
 
-    debtor.amount -= amount;
-    creditor.amount -= amount;
+    debtor.amount = parseAmount(debtor.amount - amount);
+    creditor.amount = parseAmount(creditor.amount - amount);
 
     if (debtor.amount <= 0.01) {
-      i += 1;
+      debtorIndex += 1;
     }
     if (creditor.amount <= 0.01) {
-      j += 1;
+      creditorIndex += 1;
     }
   }
-
-  // 6. Persist the simplified balances on the Trip document
-  trip.balances = simplifiedBalances;
-  await trip.save();
 
   return { simplifiedBalances, exactBalances };
 };
 
 module.exports = {
   calculateBalances,
+  loadTripExpenses,
 };
-

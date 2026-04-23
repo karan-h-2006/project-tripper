@@ -1,61 +1,108 @@
 const crypto = require("crypto");
-const Trip = require("../models/Trip");
-const User = require("../models/User");
-const Activity = require("../models/Activity");
+const { getSupabase } = require("../lib/supabase");
+const {
+  buildJoinCodeFromTripId,
+  getRequesterId,
+  getRequesterName,
+  isUuid,
+  mapLegacyTrip,
+  mapSupabaseError,
+  parseAmount,
+  parseTripMeta,
+  serializeTripMeta,
+} = require("../lib/legacyCompat");
+const { createAndEmitActivity } = require("../services/activityFeedService");
+const {
+  fetchTripSnapshot,
+  getMembershipForUser,
+  isTripAdminUser,
+  listTripsForUser,
+  mapTripForDashboard,
+  mapTripForRoom,
+} = require("../services/tripDataService");
 const { runBudgetOptimizer } = require("../services/budgetOptimizer");
 
-const getNormalizedUserId = (userLike) => {
-  if (!userLike) return "";
-  if (typeof userLike === "string") return userLike;
-  if (userLike._id) return userLike._id.toString();
-  return userLike.toString();
-};
-
-const isTripAdminUser = (trip, userId) => {
-  const normalizedUserId = getNormalizedUserId(userId);
-  const adminIds = Array.isArray(trip.admins)
-    ? trip.admins.map((adminId) => getNormalizedUserId(adminId))
-    : [];
-
-  // Backward-compatible support for trips that only have `admin` set.
-  const primaryAdminId = getNormalizedUserId(trip.admin);
-
-  return (
-    adminIds.includes(normalizedUserId) || primaryAdminId === normalizedUserId
-  );
+const runBudgetOptimizerSafely = async (tripId, io) => {
+  try {
+    await runBudgetOptimizer(tripId, io);
+  } catch (error) {
+    console.error("Budget optimizer warning:", error.message);
+  }
 };
 
 const createTrip = async (req, res) => {
   try {
     const { title, description, total_budget } = req.body;
+    const requesterId = getRequesterId(req);
 
     if (!title) {
       return res.status(400).json({ message: "Title is required" });
     }
 
-    const adminId = req.user && req.user.id ? req.user.id : req.user?._id;
-
-    if (!adminId) {
+    if (!requesterId || !isUuid(requesterId)) {
       return res.status(401).json({ message: "Not authorized" });
     }
 
-    const join_code = crypto.randomBytes(3).toString("hex").toUpperCase();
+    const tripId = crypto.randomUUID();
+    const joinCode = buildJoinCodeFromTripId(tripId);
 
-    const trip = await Trip.create({
-      title,
-      description,
-      total_budget: typeof total_budget === "number" ? total_budget : 0,
-      join_code,
-      admin: adminId,
-      members: [adminId],
-      admins: [adminId],
+    const { data: tripRows, error: tripError } = await getSupabase()
+      .from("trips")
+      .insert({
+        id: tripId,
+        title: String(title).trim(),
+        description: description ? String(description).trim() : null,
+        base_currency: "INR",
+        status: "ACTIVE",
+        cover_image_key: serializeTripMeta({
+          joinCode,
+          totalBudget: parseAmount(total_budget),
+          coverImageKey: null,
+        }),
+      })
+      .select("id, title, description, status, cover_image_key, created_at, updated_at");
+
+    if (tripError) {
+      const mapped = mapSupabaseError(tripError);
+      return res.status(mapped.status).json({ message: mapped.message });
+    }
+
+    const { error: membershipError } = await getSupabase().from("trip_members").insert({
+      id: crypto.randomUUID(),
+      trip_id: tripId,
+      user_id: requesterId,
+      role: "OWNER",
     });
 
-    await User.findByIdAndUpdate(adminId, {
-      $addToSet: { trips: trip._id },
-    });
+    if (membershipError) {
+      await getSupabase().from("trips").delete().eq("id", tripId);
+      const mapped = mapSupabaseError(membershipError);
+      return res.status(mapped.status).json({ message: mapped.message });
+    }
 
-    return res.status(201).json(trip);
+    return res.status(201).json(
+      mapLegacyTrip(
+        {
+          ...tripRows[0],
+          trip_members: [
+            {
+              id: crypto.randomUUID(),
+              trip_id: tripId,
+              user_id: requesterId,
+              role: "OWNER",
+              joined_at: new Date().toISOString(),
+              removed_at: null,
+              user: null,
+            },
+          ],
+        },
+        {
+          populateAdmin: false,
+          populateMembers: false,
+          populateAdmins: false,
+        }
+      )
+    );
   } catch (error) {
     console.error("Create trip error:", error);
     return res.status(500).json({ message: "Server error" });
@@ -64,190 +111,230 @@ const createTrip = async (req, res) => {
 
 const getMyTrips = async (req, res) => {
   try {
-    const userId = req.user && (req.user.id || req.user._id);
+    const requesterId = getRequesterId(req);
 
-    if (!userId) {
+    if (!requesterId || !isUuid(requesterId)) {
       return res.status(401).json({ message: "Not authorized" });
     }
 
-    const trips = await Trip.find({ members: userId })
-      .populate("admin", "-password")
-      .populate("members", "-password")
-      .sort({ updatedAt: -1, createdAt: -1 });
+    const trips = (await listTripsForUser(requesterId))
+      .filter((tripRow) => Boolean(getMembershipForUser(tripRow, requesterId)))
+      .map(mapTripForDashboard);
 
     return res.status(200).json({ trips });
   } catch (error) {
     console.error("Get my trips error:", error);
-    return res.status(500).json({ message: "Server error" });
+    const mapped = mapSupabaseError(error);
+    return res.status(mapped.status).json({ message: mapped.message });
   }
 };
 
 const getTripById = async (req, res) => {
   try {
-    const userId = req.user && (req.user.id || req.user._id);
+    const requesterId = getRequesterId(req);
     const tripId = req.params.tripId || req.params.id;
 
-    if (!userId) {
+    if (!requesterId || !isUuid(requesterId)) {
       return res.status(401).json({ message: "Not authorized" });
     }
 
-    const trip = await Trip.findById(tripId)
-      .populate("admin", "-password")
-      .populate("members", "username profilePic")
-      .populate("admins", "username profilePic");
-
-    if (!trip) {
-      return res.status(404).json({ message: "Trip not found" });
+    if (!isUuid(tripId)) {
+      return res.status(400).json({ message: "Invalid trip id" });
     }
 
-    const isMember = trip.members.some(
-      (member) => getNormalizedUserId(member) === userId.toString()
-    );
-
-    if (!isMember) {
+    const tripRow = await fetchTripSnapshot(tripId);
+    if (!getMembershipForUser(tripRow, requesterId)) {
       return res.status(403).json({ message: "Forbidden" });
     }
 
-    return res.status(200).json({ trip });
+    return res.status(200).json({ trip: mapTripForRoom(tripRow) });
   } catch (error) {
     console.error("Get trip by id error:", error);
-    return res.status(500).json({ message: "Server error" });
+    const mapped = mapSupabaseError(error);
+    return res
+      .status(mapped.status === 404 ? 404 : mapped.status)
+      .json({ message: mapped.status === 404 ? "Trip not found" : mapped.message });
   }
 };
 
 const promoteToAdmin = async (req, res) => {
   try {
     const { tripId, userId } = req.params;
-    const trip = await Trip.findById(tripId);
+    const requesterId = getRequesterId(req);
 
-    if (!trip) {
-      return res.status(404).json({ message: "Trip not found" });
+    if (!requesterId || !isUuid(requesterId)) {
+      return res.status(401).json({ message: "Not authorized" });
     }
 
-    const requesterId = req.user && (req.user.id || req.user._id);
-    const isRequesterAdmin = isTripAdminUser(trip, requesterId);
+    if (!isUuid(tripId) || !isUuid(userId)) {
+      return res.status(400).json({ message: "Invalid trip or user id" });
+    }
 
-    if (!isRequesterAdmin) {
+    const tripRow = await fetchTripSnapshot(tripId);
+    if (!isTripAdminUser(tripRow, requesterId)) {
       return res.status(403).json({ message: "Forbidden" });
     }
 
-    const currentAdminIds = Array.isArray(trip.admins)
-      ? trip.admins.map((id) => id.toString())
-      : [];
-    trip.admins = Array.from(new Set([...currentAdminIds, userId.toString()]));
-    await trip.save();
-
-    const io = req.app.get("io");
-    const newActivity = await Activity.create({
-      tripId,
-      userId: requesterId,
-      text: `${req.user.username} promoted a user to Admin`,
-      type: "system",
-    });
-    await newActivity.populate("userId", "username profilePic");
-
-    if (io) {
-      const roomString = tripId.toString();
-      io.to(roomString).emit("receive_message", newActivity);
-      io.to(roomString).emit("trip_members_updated");
+    if (!getMembershipForUser(tripRow, userId)) {
+      return res.status(404).json({ message: "User is not a member of this trip" });
     }
 
-    return res.status(200).json(trip);
+    const { error } = await getSupabase()
+      .from("trip_members")
+      .update({ role: "ADMIN" })
+      .eq("trip_id", tripId)
+      .eq("user_id", userId)
+      .is("removed_at", null);
+
+    if (error) {
+      const mapped = mapSupabaseError(error);
+      return res.status(mapped.status).json({ message: mapped.message });
+    }
+
+    const updatedTrip = await fetchTripSnapshot(tripId);
+    const io = req.app.get("io");
+    await createAndEmitActivity({
+      io,
+      tripId,
+      userId: requesterId,
+      text: `${getRequesterName(req)} promoted a user to Admin`,
+      type: "system",
+    });
+    io?.to(String(tripId)).emit("trip_members_updated");
+
+    return res.status(200).json(
+      mapLegacyTrip(updatedTrip, {
+        populateAdmin: false,
+        populateMembers: false,
+        populateAdmins: false,
+      })
+    );
   } catch (error) {
     console.error("Promote to admin error:", error);
-    return res.status(500).json({ message: "Server error" });
+    const mapped = mapSupabaseError(error);
+    return res.status(mapped.status).json({ message: mapped.message });
   }
 };
 
 const demoteFromAdmin = async (req, res) => {
   try {
     const { tripId, userId } = req.params;
-    const trip = await Trip.findById(tripId);
+    const requesterId = getRequesterId(req);
 
-    if (!trip) {
-      return res.status(404).json({ message: "Trip not found" });
+    if (!requesterId || !isUuid(requesterId)) {
+      return res.status(401).json({ message: "Not authorized" });
     }
 
-    const requesterId = req.user && (req.user.id || req.user._id);
-    const isRequesterAdmin = isTripAdminUser(trip, requesterId);
+    if (!isUuid(tripId) || !isUuid(userId)) {
+      return res.status(400).json({ message: "Invalid trip or user id" });
+    }
 
-    if (!isRequesterAdmin) {
+    const tripRow = await fetchTripSnapshot(tripId);
+    if (!isTripAdminUser(tripRow, requesterId)) {
       return res.status(403).json({ message: "Forbidden" });
     }
 
-    trip.admins = (trip.admins || []).filter(
-      (adminId) => adminId.toString() !== userId.toString()
-    );
-    await trip.save();
-
-    const io = req.app.get("io");
-    const newActivity = await Activity.create({
-      tripId,
-      userId: requesterId,
-      text: `${req.user.username} removed Admin privileges from a user`,
-      type: "system",
-    });
-    await newActivity.populate("userId", "username profilePic");
-
-    if (io) {
-      const roomString = tripId.toString();
-      io.to(roomString).emit("receive_message", newActivity);
-      io.to(roomString).emit("trip_members_updated");
+    const targetMembership = getMembershipForUser(tripRow, userId);
+    if (!targetMembership) {
+      return res.status(404).json({ message: "User is not a member of this trip" });
     }
 
-    return res.status(200).json(trip);
+    if (targetMembership.role === "ADMIN") {
+      const { error } = await getSupabase()
+        .from("trip_members")
+        .update({ role: "MEMBER" })
+        .eq("trip_id", tripId)
+        .eq("user_id", userId)
+        .is("removed_at", null);
+
+      if (error) {
+        const mapped = mapSupabaseError(error);
+        return res.status(mapped.status).json({ message: mapped.message });
+      }
+    }
+
+    const updatedTrip = await fetchTripSnapshot(tripId);
+    const io = req.app.get("io");
+    await createAndEmitActivity({
+      io,
+      tripId,
+      userId: requesterId,
+      text: `${getRequesterName(req)} removed Admin privileges from a user`,
+      type: "system",
+    });
+    io?.to(String(tripId)).emit("trip_members_updated");
+
+    return res.status(200).json(
+      mapLegacyTrip(updatedTrip, {
+        populateAdmin: false,
+        populateMembers: false,
+        populateAdmins: false,
+      })
+    );
   } catch (error) {
     console.error("Demote from admin error:", error);
-    return res.status(500).json({ message: "Server error" });
+    const mapped = mapSupabaseError(error);
+    return res.status(mapped.status).json({ message: mapped.message });
   }
 };
 
 const kickMember = async (req, res) => {
   try {
     const { tripId, userId } = req.params;
-    const trip = await Trip.findById(tripId);
+    const requesterId = getRequesterId(req);
 
-    if (!trip) {
-      return res.status(404).json({ message: "Trip not found" });
+    if (!requesterId || !isUuid(requesterId)) {
+      return res.status(401).json({ message: "Not authorized" });
     }
 
-    const requesterId = req.user && (req.user.id || req.user._id);
-    const isRequesterAdmin = isTripAdminUser(trip, requesterId);
+    if (!isUuid(tripId) || !isUuid(userId)) {
+      return res.status(400).json({ message: "Invalid trip or user id" });
+    }
 
-    if (!isRequesterAdmin) {
+    const tripRow = await fetchTripSnapshot(tripId);
+    if (!isTripAdminUser(tripRow, requesterId)) {
       return res.status(403).json({ message: "Forbidden" });
     }
 
-    trip.members = trip.members.filter(
-      (memberId) => memberId.toString() !== userId.toString()
-    );
-    trip.admins = (trip.admins || []).filter(
-      (adminId) => adminId.toString() !== userId.toString()
-    );
-    await trip.save();
-
-    const io = req.app.get("io");
-    const newActivity = await Activity.create({
-      tripId,
-      userId: requesterId,
-      text: `${req.user.username} kicked a user from the trip`,
-      type: "system",
-    });
-    await newActivity.populate("userId", "username profilePic");
-
-    if (io) {
-      const roomString = tripId.toString();
-      io.to(roomString).emit("receive_message", newActivity);
-      io.to(roomString).emit("trip_members_updated");
-      io.to(roomString).emit("user_kicked", {
-        userId: req.params.userId.toString(),
-      });
+    if (!getMembershipForUser(tripRow, userId)) {
+      return res.status(404).json({ message: "User is not a member of this trip" });
     }
 
-    return res.status(200).json(trip);
+    const { error } = await getSupabase()
+      .from("trip_members")
+      .update({ removed_at: new Date().toISOString() })
+      .eq("trip_id", tripId)
+      .eq("user_id", userId)
+      .is("removed_at", null);
+
+    if (error) {
+      const mapped = mapSupabaseError(error);
+      return res.status(mapped.status).json({ message: mapped.message });
+    }
+
+    const updatedTrip = await fetchTripSnapshot(tripId);
+    const io = req.app.get("io");
+    await createAndEmitActivity({
+      io,
+      tripId,
+      userId: requesterId,
+      text: `${getRequesterName(req)} kicked a user from the trip`,
+      type: "system",
+    });
+    io?.to(String(tripId)).emit("trip_members_updated");
+    io?.to(String(tripId)).emit("user_kicked", { userId: String(userId) });
+
+    return res.status(200).json(
+      mapLegacyTrip(updatedTrip, {
+        populateAdmin: false,
+        populateMembers: false,
+        populateAdmins: false,
+      })
+    );
   } catch (error) {
     console.error("Kick member error:", error);
-    return res.status(500).json({ message: "Server error" });
+    const mapped = mapSupabaseError(error);
+    return res.status(mapped.status).json({ message: mapped.message });
   }
 };
 
@@ -255,10 +342,14 @@ const updateTripBudget = async (req, res) => {
   try {
     const { tripId } = req.params;
     const { newBudget } = req.body;
-    const requesterId = req.user && (req.user.id || req.user._id);
+    const requesterId = getRequesterId(req);
 
-    if (!requesterId) {
+    if (!requesterId || !isUuid(requesterId)) {
       return res.status(401).json({ message: "Not authorized" });
+    }
+
+    if (!isUuid(tripId)) {
+      return res.status(400).json({ message: "Invalid trip id" });
     }
 
     const parsedBudget = Number(newBudget);
@@ -266,81 +357,104 @@ const updateTripBudget = async (req, res) => {
       return res.status(400).json({ message: "newBudget must be a valid number" });
     }
 
-    const trip = await Trip.findById(tripId);
-    if (!trip) {
-      return res.status(404).json({ message: "Trip not found" });
-    }
-
-    if (!isTripAdminUser(trip, requesterId)) {
+    const tripRow = await fetchTripSnapshot(tripId);
+    if (!isTripAdminUser(tripRow, requesterId)) {
       return res.status(403).json({ message: "Forbidden" });
     }
 
-    trip.total_budget = parsedBudget;
-    await trip.save();
+    const currentMeta = parseTripMeta(tripRow.cover_image_key);
+    const { error } = await getSupabase()
+      .from("trips")
+      .update({
+        cover_image_key: serializeTripMeta({
+          joinCode: currentMeta.joinCode || buildJoinCodeFromTripId(tripId),
+          totalBudget: parsedBudget,
+          coverImageKey: currentMeta.coverImageKey,
+        }),
+      })
+      .eq("id", tripId);
 
-    const io = req.app.get("io");
-    const activity = await Activity.create({
-      tripId,
-      userId: requesterId,
-      text: `${req.user.username} updated the trip budget to ₹${parsedBudget}`,
-      type: "system",
-    });
-    await activity.populate("userId", "username profilePic");
-
-    if (io) {
-      const roomString = tripId.toString();
-      io.to(roomString).emit("budget_updated");
-      io.to(roomString).emit("receive_message", activity);
+    if (error) {
+      const mapped = mapSupabaseError(error);
+      return res.status(mapped.status).json({ message: mapped.message });
     }
 
-    await runBudgetOptimizer(tripId, req.app.get("io"));
-    return res.status(200).json({ trip });
+    const updatedTrip = await fetchTripSnapshot(tripId);
+    const io = req.app.get("io");
+    await createAndEmitActivity({
+      io,
+      tripId,
+      userId: requesterId,
+      text: `${getRequesterName(req)} updated the trip budget to INR ${parsedBudget}`,
+      type: "system",
+    });
+    io?.to(String(tripId)).emit("budget_updated");
+    await runBudgetOptimizerSafely(tripId, io);
+
+    return res.status(200).json({
+      trip: mapLegacyTrip(updatedTrip, {
+        populateAdmin: false,
+        populateMembers: false,
+        populateAdmins: false,
+      }),
+    });
   } catch (error) {
     console.error("Update trip budget error:", error);
-    return res.status(500).json({ message: "Server error" });
+    const mapped = mapSupabaseError(error);
+    return res.status(mapped.status).json({ message: mapped.message });
   }
 };
 
 const endTrip = async (req, res) => {
   try {
     const { tripId } = req.params;
-    const requesterId = req.user && (req.user.id || req.user._id);
+    const requesterId = getRequesterId(req);
 
-    if (!requesterId) {
+    if (!requesterId || !isUuid(requesterId)) {
       return res.status(401).json({ message: "Not authorized" });
     }
 
-    const trip = await Trip.findById(tripId);
-    if (!trip) {
-      return res.status(404).json({ message: "Trip not found" });
+    if (!isUuid(tripId)) {
+      return res.status(400).json({ message: "Invalid trip id" });
     }
 
-    if (!isTripAdminUser(trip, requesterId)) {
+    const tripRow = await fetchTripSnapshot(tripId);
+    if (!isTripAdminUser(tripRow, requesterId)) {
       return res.status(403).json({ message: "Forbidden" });
     }
 
-    trip.status = "ended";
-    await trip.save();
+    const { error } = await getSupabase()
+      .from("trips")
+      .update({ status: "COMPLETED" })
+      .eq("id", tripId);
 
-    const io = req.app.get("io");
-    const activity = await Activity.create({
-      tripId,
-      userId: requesterId,
-      text: `🛑 ${req.user.username} ended the trip. No further expenses can be added.`,
-      type: "system",
-    });
-    await activity.populate("userId", "username profilePic");
-
-    if (io) {
-      const roomString = tripId.toString();
-      io.to(roomString).emit("trip_ended");
-      io.to(roomString).emit("receive_message", activity);
+    if (error) {
+      const mapped = mapSupabaseError(error);
+      return res.status(mapped.status).json({ message: mapped.message });
     }
 
-    return res.status(200).json({ trip });
+    const updatedTrip = await fetchTripSnapshot(tripId);
+    const io = req.app.get("io");
+    await createAndEmitActivity({
+      io,
+      tripId,
+      userId: requesterId,
+      text: `${getRequesterName(req)} ended the trip. No further expenses can be added.`,
+      type: "system",
+    });
+    io?.to(String(tripId)).emit("trip_ended");
+
+    return res.status(200).json({
+      trip: mapLegacyTrip(updatedTrip, {
+        populateAdmin: false,
+        populateMembers: false,
+        populateAdmins: false,
+      }),
+    });
   } catch (error) {
     console.error("End trip error:", error);
-    return res.status(500).json({ message: "Server error" });
+    const mapped = mapSupabaseError(error);
+    return res.status(mapped.status).json({ message: mapped.message });
   }
 };
 
@@ -354,4 +468,3 @@ module.exports = {
   updateTripBudget,
   endTrip,
 };
-

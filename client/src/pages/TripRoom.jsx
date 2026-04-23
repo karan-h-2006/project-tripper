@@ -58,7 +58,7 @@ const TripRoom = () => {
 
   useEffect(() => {
     const token = localStorage.getItem("tripper_token");
-    const socketClient = io("http://localhost:5000", {
+    const socketClient = io(import.meta.env.VITE_SOCKET_URL || "http://localhost:5500", {
       auth: { token },
     });
     setSocket(socketClient);

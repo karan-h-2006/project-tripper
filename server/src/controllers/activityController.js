@@ -1,13 +1,9 @@
-const Activity = require("../models/Activity");
+const { listActivities } = require("../services/activityFeedService");
 
 const getTripActivities = async (req, res) => {
   try {
     const { tripId } = req.params;
-
-    const activities = await Activity.find({ tripId })
-      .populate("userId", "username profilePic")
-      .sort({ createdAt: 1 });
-
+    const activities = await listActivities(tripId);
     return res.status(200).json(activities);
   } catch (error) {
     console.error("Get trip activities error:", error);
@@ -18,4 +14,3 @@ const getTripActivities = async (req, res) => {
 module.exports = {
   getTripActivities,
 };
-

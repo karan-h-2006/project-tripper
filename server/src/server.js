@@ -9,10 +9,10 @@ const authRoutes = require("./routes/authRoutes");
 const paymentRoutes = require("./routes/paymentRoutes");
 const tripRoutes = require("./routes/tripRoutes");
 const expenseRoutes = require("./routes/expenseRoutes");
-const userRoutes = require('./routes/userRoutes');
+const userRoutes = require("./routes/userRoutes");
 const itineraryRoutes = require("./routes/itineraryRoutes");
 const ledgerRoutes = require("./routes/ledgerRoutes");
-const Activity = require("./models/Activity");
+const { createAndEmitActivity } = require("./services/activityFeedService");
 
 const ALLOWED_ORIGINS = [
   "http://localhost:5173",
@@ -31,7 +31,6 @@ const io = new Server(server, {
   },
 });
 
-// Make the socket.io instance available to controllers via req.app.get("io")
 app.set("io", io);
 const PORT = process.env.PORT || 5000;
 
@@ -48,7 +47,7 @@ app.use("/api/auth", authRoutes);
 app.use("/api/payments", paymentRoutes);
 app.use("/api/trips", tripRoutes);
 app.use("/api/expenses", expenseRoutes);
-app.use('/api/users', userRoutes);
+app.use("/api/users", userRoutes);
 app.use("/api/itinerary", itineraryRoutes);
 app.use("/api/activities", require("./routes/activityRoutes"));
 app.use("/api/ledger", ledgerRoutes);
@@ -70,7 +69,6 @@ app.use((error, req, res, next) => {
 io.use((socket, next) => {
   try {
     const token = socket.handshake.auth?.token;
-
     if (!token) {
       return next(new Error("Authentication error: No token provided"));
     }
@@ -88,31 +86,35 @@ io.on("connection", (socket) => {
 
   socket.on("join_trip_room", (tripId) => {
     try {
-      socket.join(tripId);
+      socket.join(String(tripId));
       console.log(`User ${socket.id} joined trip room: ${tripId}`);
     } catch (error) {
       console.error("Error joining trip room:", error.message);
     }
   });
 
+  socket.on("leave_room", (tripId) => {
+    try {
+      socket.leave(String(tripId));
+    } catch (error) {
+      console.error("Error leaving trip room:", error.message);
+    }
+  });
+
   socket.on("send_message", async (data) => {
     try {
       const { tripId, userId, text, type } = data || {};
-
       if (!tripId || !text) {
         return;
       }
 
-      const activity = await Activity.create({
+      await createAndEmitActivity({
+        io,
         tripId,
         userId: userId || socket.userId || null,
         text,
-        type,
+        type: type || "chat",
       });
-
-      await activity.populate("userId", "username profilePic");
-
-      io.to(tripId).emit("receive_message", activity);
     } catch (error) {
       console.error("send_message error:", error);
     }
