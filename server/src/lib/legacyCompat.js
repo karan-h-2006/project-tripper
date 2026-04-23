@@ -96,18 +96,25 @@ const parsePrefixedJson = (rawValue, prefix, fallback) => {
 
 const serializePrefixedJson = (prefix, payload) => `${prefix}${JSON.stringify(payload)}`;
 
-const parseUserMeta = (timezoneValue) =>
-  parsePrefixedJson(timezoneValue, USER_META_PREFIX, {
-    timezone: typeof timezoneValue === "string" && timezoneValue ? timezoneValue : "UTC",
+const parseUserMeta = (timezoneValue) => {
+  const fallbackTimezone =
+    typeof timezoneValue === "string" && timezoneValue ? timezoneValue : "UTC";
+  const parsed = parsePrefixedJson(timezoneValue, USER_META_PREFIX, null);
+  const normalizedTimezone =
+    parsed && typeof parsed.timezone === "string" && parsed.timezone
+      ? parsed.timezone
+      : fallbackTimezone;
+
+  return {
+    timezone: normalizedTimezone,
     passwordHash: null,
     googleId: null,
-  });
+  };
+};
 
-const serializeUserMeta = ({ timezone = "UTC", passwordHash = null, googleId = null }) =>
+const serializeUserMeta = ({ timezone = "UTC" }) =>
   serializePrefixedJson(USER_META_PREFIX, {
     timezone,
-    passwordHash,
-    googleId,
   });
 
 const parseTripMeta = (coverImageKey) =>
@@ -250,7 +257,7 @@ const mapLegacyUser = (userRow, { compact = false } = {}) => {
     username: userRow.display_name || "Unknown user",
     email: userRow.email || "",
     profilePic: userRow.avatar_url || null,
-    googleId: userRow.google_id || meta.googleId || null,
+    googleId: userRow.google_id || null,
     createdAt: userRow.created_at || null,
     updatedAt: userRow.updated_at || null,
   };

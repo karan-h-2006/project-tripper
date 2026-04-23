@@ -7,8 +7,6 @@ const {
   USER_SELECT,
   mapLegacyUser,
   mapSupabaseError,
-  parseUserMeta,
-  serializeUserMeta,
 } = require("../lib/legacyCompat");
 const { fetchUserByEmail } = require("../services/tripDataService");
 
@@ -58,11 +56,7 @@ const register = async (req, res) => {
         avatar_url: null,
         password_hash: passwordHash,
         google_id: null,
-        timezone: serializeUserMeta({
-          timezone: "UTC",
-          passwordHash: null,
-          googleId: null,
-        }),
+        timezone: "UTC",
       })
       .select(USER_SELECT);
 
@@ -95,15 +89,13 @@ const login = async (req, res) => {
       return res.status(400).json({ message: "Invalid credentials" });
     }
 
-    const userMeta = parseUserMeta(userRow.timezone);
-    const hashToCompare = userRow.password_hash || userMeta.passwordHash;
-    if (!hashToCompare) {
+    if (!userRow.password_hash) {
       return res.status(400).json({
         message: "This account uses Google sign-in. Continue with Google.",
       });
     }
 
-    const isMatch = await bcrypt.compare(String(password), hashToCompare);
+    const isMatch = await bcrypt.compare(String(password), userRow.password_hash);
     if (!isMatch) {
       return res.status(400).json({ message: "Invalid credentials" });
     }
@@ -158,11 +150,7 @@ const googleLogin = async (req, res) => {
           avatar_url: payload.picture || null,
           password_hash: null,
           google_id: payload.sub,
-          timezone: serializeUserMeta({
-            timezone: "UTC",
-            passwordHash: null,
-            googleId: null,
-          }),
+          timezone: "UTC",
         })
         .select(USER_SELECT);
 
@@ -173,10 +161,8 @@ const googleLogin = async (req, res) => {
 
       userRow = insertedRows[0];
     } else {
-      const userMeta = parseUserMeta(userRow.timezone);
-      
       const updatePayload = {};
-      if (!userRow.google_id && !userMeta.googleId) {
+      if (!userRow.google_id) {
         updatePayload.google_id = payload.sub;
       }
       if (!userRow.avatar_url && payload.picture) {
