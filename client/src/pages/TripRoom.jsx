@@ -3,7 +3,7 @@ import { io } from 'socket.io-client';
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { ArrowLeft, IndianRupee, KeyRound, MapPinned, QrCode } from "lucide-react";
 import toast from "react-hot-toast";
-import api from "../api/axios";
+import api, { API_ORIGIN } from "../api/axios";
 import { useAuth } from "../context/useAuth.js";
 import ActivityFeed from "../components/ActivityFeed.jsx";
 import ItineraryPanel from "../components/ItineraryPanel.jsx";
@@ -58,7 +58,7 @@ const TripRoom = () => {
 
   useEffect(() => {
     const token = localStorage.getItem("tripper_token");
-    const socketClient = io("http://localhost:5000", {
+    const socketClient = io(API_ORIGIN, {
       auth: { token },
     });
     setSocket(socketClient);

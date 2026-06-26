@@ -14,11 +14,16 @@ const itineraryRoutes = require("./routes/itineraryRoutes");
 const ledgerRoutes = require("./routes/ledgerRoutes");
 const Activity = require("./models/Activity");
 
+const configuredClientUrls = (process.env.CLIENT_URL || "")
+  .split(",")
+  .map((origin) => origin.trim().replace(/\/$/, ""))
+  .filter(Boolean);
+
 const ALLOWED_ORIGINS = [
   "http://localhost:5173",
   "http://localhost:5174",
   "http://localhost:5175",
-  ...(process.env.CLIENT_URL ? [process.env.CLIENT_URL] : []),
+  ...configuredClientUrls,
 ];
 
 const app = express();

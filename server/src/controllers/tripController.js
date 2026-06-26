@@ -70,7 +70,16 @@ const getMyTrips = async (req, res) => {
       return res.status(401).json({ message: "Not authorized" });
     }
 
-    const trips = await Trip.find({ members: userId })
+    const linkedTripIds = Array.isArray(req.user.trips) ? req.user.trips : [];
+
+    const trips = await Trip.find({
+      $or: [
+        { members: userId },
+        { admin: userId },
+        { admins: userId },
+        { _id: { $in: linkedTripIds } },
+      ],
+    })
       .populate("admin", "-password")
       .populate("members", "-password")
       .sort({ updatedAt: -1, createdAt: -1 });

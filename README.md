@@ -212,6 +212,7 @@ Create `client/.env`:
 
 ```env
 VITE_GOOGLE_CLIENT_ID=your-google-client-id.apps.googleusercontent.com
+VITE_API_URL=http://localhost:5000/api
 ```
 
 `client/.env.example` is included as a template.
@@ -362,14 +363,77 @@ From `client/`:
 
 ## Deployment Notes
 
-This project currently works best as a local development app.
+Recommended deployment path:
 
-Important current limitation:
+- MongoDB Atlas for the production database
+- Render for the Express + Socket.IO backend
+- Vercel for the Vite React frontend
 
-- the frontend HTTP client is hardcoded to `http://localhost:5000/api`
-- the trip room Socket.IO connection is hardcoded to `http://localhost:5000`
+### 1. Prepare MongoDB Atlas
 
-That means for full deployment support, you will likely want to make both the API base URL and socket URL configurable through environment variables before hosting the app for external users.
+Create an Atlas cluster, add a database user, and allow network access from your host.
+For Render, the easiest first deployment setting is `0.0.0.0/0` in Atlas Network Access. For a stricter production setup, replace that later with Render's outbound IPs if your plan supports them.
+
+Copy the Atlas connection string and include the database name:
+
+```env
+MONGO_URI=mongodb+srv://username:password@cluster0.example.mongodb.net/project-tripper?retryWrites=true&w=majority
+```
+
+### 2. Deploy the backend on Render
+
+Create a new Web Service from this repository.
+
+Use these settings:
+
+```text
+Root Directory: server
+Build Command: npm install
+Start Command: npm start
+```
+
+Add these Render environment variables:
+
+```env
+PORT=10000
+MONGO_URI=your_atlas_connection_string
+JWT_SECRET=use_a_long_random_secret
+GOOGLE_CLIENT_ID=your-google-client-id.apps.googleusercontent.com
+CLIENT_URL=https://your-vercel-app.vercel.app
+```
+
+After Render deploys, copy the backend URL. It will look like:
+
+```text
+https://project-tripper-api.onrender.com
+```
+
+### 3. Deploy the frontend on Vercel
+
+Create a new Vercel project from this repository.
+
+Use these settings:
+
+```text
+Root Directory: client
+Build Command: npm run build
+Output Directory: dist
+```
+
+Add these Vercel environment variables:
+
+```env
+VITE_API_URL=https://project-tripper-api.onrender.com/api
+VITE_GOOGLE_CLIENT_ID=your-google-client-id.apps.googleusercontent.com
+```
+
+The `client/vercel.json` file rewrites all frontend routes to `index.html`, so refreshing pages like `/dashboard` and `/trip/:id` works.
+
+### 4. Update production URLs
+
+After Vercel gives you the final frontend URL, update Render's `CLIENT_URL` to that exact URL and redeploy the backend.
+
+If Google sign-in is enabled, also add the Vercel URL to the OAuth client's authorized JavaScript origins in Google Cloud Console.
 
 ## Troubleshooting
 
